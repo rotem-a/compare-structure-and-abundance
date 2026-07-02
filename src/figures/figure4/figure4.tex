@@ -1,0 +1,84 @@
+% Source - https://tex.stackexchange.com/a/330103
+% Posted by user2574, modified by community. See post 'Timeline' for change history
+% Retrieved 2026-02-18, License - CC BY-SA 4.0
+
+\documentclass[varwidth,margin=1cm]{standalone}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{graphicx}
+
+\usepackage[T1]{fontenc}
+\usepackage[scaled]{helvet} % Loads Helvetica
+\scriptsize 
+
+
+\renewcommand{\familydefault}{\sfdefault} % Sets Helvetica as default
+
+
+
+
+
+\begin{document}
+\begin{figure}
+%\hspace{-1.2em}
+ %\makebox[\textwidth][l]{\scriptsize{Numbers of DTU features}}
+ 
+ 
+  \begin{subfigure}[t]{0.2\textwidth}
+        \centering
+        \llap{\raisebox{0mm}{\textbf{\tiny a }}}%
+               \vspace{-2mm}
+      \tiny  Transcript proportions (ACTG1)
+    %    \makebox[\linewidth][l]{\tiny \textbf{a} Proportions}
+        \includegraphics[width=\linewidth,height=2.5cm, keepaspectratio=false]{ENSG00000184009proportions_plot_no_title.pdf}        
+     %  \par\vspace{-1em}%
+       
+     %  \vspace{-5mm}  % Negative space to pull images closer
+    
+        {\llap{\raisebox{\dimexpr\height-2mm}{\textbf{\tiny b}}}
+         \vspace{-1.6mm}
+    \tiny Transcript counts (ACTG1)
+          \includegraphics[width=\linewidth,height=2.5cm, keepaspectratio=false]{ENSG00000184009cpm_plot_no_title.pdf}   
+}     
+          \end{subfigure}    
+    \begin{subfigure}[t][6.05cm][t]{0.5\textwidth}
+        \centering
+           \llap{\raisebox{0mm}{\textbf{\tiny c }}}%
+               \vspace{-2mm}
+         \tiny Novel transcript in PCR-cDNA not detected in direct RNA samples  (ACTG1)
+        \includegraphics[width=\textwidth,height=5.3cm, keepaspectratio=false]{ENSG00000184009coverage_plot_A549novel_exitron_log_scale.png}    
+    \end{subfigure}
+    
+          \vspace{-5mm}
+          
+      \begin{subfigure}{0.2\textwidth}
+             \centering  
+                 \llap{\raisebox{0mm}{\textbf{\tiny d }}}%
+               \vspace{-2mm}
+           \tiny Number of DTU genes with  a novel transcript in PCRcDNA
+%\llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\scriptsize a}} \scriptsize {Numbers of DTU}\hspace{0.01em}}%%
+       \includegraphics[width=\linewidth,height=3cm, keepaspectratio=false]{/Users/rotem/Code/manuscript-and-analysis-code/src/analysis-pages/figures/figure4/novel_pairs_numbers.png}
+    \end{subfigure}
+ \begin{subfigure}{0.6\textwidth}
+        \centering
+           \llap{\raisebox{0mm}{\textbf{\tiny e }}}%
+               \vspace{-2mm}
+    \tiny Number of structural differences detected between novel in PCRcDNA and dominant in direct RNA 
+        \includegraphics[width=\linewidth,height=3cm, keepaspectratio=false]{events_numbers_in_novel_pairs.png}
+    \end{subfigure}
+
+%     
+%    \begin{subfigure}{0.33\textwidth}
+%        \centering
+%        \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\scriptsize h}}}%
+%        \includegraphics[width=\linewidth,height=3.5cm, keepaspectratio=false]{sqanti3_label_numbers_in_switching_pairs.png}
+%    \end{subfigure}
+%    
+            
+    
+
+
+\end{figure}
+
+
+\end{document}

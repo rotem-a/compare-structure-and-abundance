@@ -1,0 +1,431 @@
+---
+title: | 
+  1 Data overview PacBio samples included <br> (Figure 1)
+
+author: "Rotem Aharon"
+date: today
+params:
+  data_path: "../../data/"
+  project_path: "/Users/rotem/Code/GitHub/manuscript-and-analysis-code/"
+  rscripts_path: "../rscripts/needed_functions.R"
+  bambu_rds: "bambu_output/all_samples_counts/se_bambu_result.rds"
+  output_path: "../../data/analysis_output/all_samples_counts/"
+  figures_path: "figures/figure1/"
+ 
+---
+
+The data analysed here is publicly available from the SG-Nex database (Ying Chen et al. 2025). The SG-NEx data was accessed in June 2025 [registry.opendata.aws/sg-nex-data](https://registry.opendata.aws/sg-nex-data).
+We started by downloading 107 .bam files (samples), which include read alignment to the human genome (hg38) for each of the replicates in each of the cell lines. 
+'bambu' v3.8.3 with NDR=0.1 was used to identify and quantify the genes and transcripts in all of the samples together. This resulted in a SummarisedExperiment R object, which includes transcript counts, and full length read counts as separate assays. Gene counts were obtained by using bambu::transcriptToGeneExpression, which effectively adds the transcript counts for each gene. 
+For each sample, library size was obtained by adding up all transcript counts. Samples with very low or very high library size  <400,000 or >40,000,000 were excluded, as well as those that had full length to all transcript ratio lower than 0.2. 
+With the remaining 79 samples, MDS dimensional reduction plots were generated using edgeR::plotMDS for each of the assays independently, with top=2000, to account for the fact transcript counts are not independent of each other.
+
+### Setup, libraries and parameters {.unnumbered .unlisted}
+```{r setup, message = TRUE, warning = TRUE, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(tidy = 'formatR') 
+```
+
+
+
+```{r libraries, message = FALSE, warning = FALSE}
+library(tidyverse)
+# analysis pkgs
+library(limma)
+library(edgeR)
+library(SummarizedExperiment)
+library(bambu)
+
+# plotting tools
+library(ggplot2)
+#library(gridExtra) 
+library(RColorBrewer)
+#library(cowplot)
+library(ggpubr)
+library(kableExtra)
+#library(patchwork)
+source("~/Code/manuscript-and-analysis-code/src/rscripts/needed_functions.R")
+```
+
+
+```{r set-parameters}
+
+data_path <- params$data_path
+project_path <- params$project_path
+
+rscripts_path <- params$rscripts_path
+source(rscripts_path)
+
+figures_path <- params$figures_path
+output_path <- params$output_path
+  
+bambu_se_rds_file <- params$bambu_rds
+bambu_rds_path <- paste(data_path,bambu_se_rds_file,sep="")
+
+```
+
+### Load bambu output {.unnumbered .unlisted}
+SummarizedExperiment with bambu output is re-loaded here, then cell-line and preparation-protocols labels are obtained based on sample name. 
+
+
+ 
+```{r load-bambu-output} 
+data_path <- params$data_path
+
+bambu_se <- readRDS( bambu_rds_path)
+
+
+analysis_se <- bambu_se
+
+
+colData(analysis_se)$cellType <- as.factor(strsplit2(colData(analysis_se)$name,split="_")[,2])
+
+colData(analysis_se)$raw_protocol <- as.factor(strsplit2(colData(analysis_se)$name,split="_")[,3])
+
+
+#define (collapsed) protocols:
+colData(analysis_se)$protocol <- fct_collapse(colData(analysis_se)$raw_protocol,"PCRcDNA" = c("cDNA", "cDNAStranded"))
+
+
+# define groups based on cellType and  (collapsed) protocols:
+colData(analysis_se)$group <- as.factor(paste(colData(analysis_se)$cellType,colData(analysis_se)$protocol,sep = "_"))
+analysis_se
+
+```
+
+
+
+# Library size (1a,1b)
+
+For each sample, obtain library size and calculate the MDS dimensional reduction with edgeR for each assay:  Gene counts, Transcript counts, and full length reads only counts.
+
+```{r calc-dim-reduction, message = FALSE, warning = FALSE}
+analysis_se <- add_dimReductions(analysis_se,calc_mds = FALSE)
+
+
+#MCF7-EV samples that were quantified by bambu in earlier stages are exluded from downstream analysis  
+analysis_se_no_ev <- analysis_se[, colData(analysis_se)$cellType  !="MCF7-EV"]
+
+```
+
+
+
+## Library size based on Transcript counts 
+```{r all-samples-libsize2}
+
+libsize_low_lim=400000
+  
+libsize_high_lim=40000000
+all_colData <- data.frame(colData(analysis_se_no_ev))
+
+# plot all library sizes in a boxplot
+f1a <- all_colData%>%ggplot(aes(cellType,log2(counts_libsize),color= protocol))+geom_boxplot() +
+  geom_jitter(shape=16, position=position_dodge(width = 0.75))+
+  geom_hline(yintercept = log2(libsize_low_lim)) +geom_hline(yintercept = log2(libsize_high_lim)) + 
+  labs(x ="",y= "log2[library size (all transcript counts)") +
+  theme(legend.position = "none")
+
+f1a
+```
+
+Adjust plot limits for better representation of variability between samples
+```{r f1a_ylim}
+
+f1a <- f1a + coord_cartesian(ylim = c(14, 26.5))
+f1a
+
+```
+
+
+## Full length to all count library size ratios
+
+```{r f1b}
+
+
+cell_line_colours <- RColorBrewer::brewer.pal(9, "Oranges")
+# hex <- hue_pal()(6)
+named_cell_line_colours <- list(
+  "A549" = cell_line_colours[3],
+  "H9" = cell_line_colours[4],
+  "HEYA8" = cell_line_colours[5],
+  "HepG2" = cell_line_colours[6],
+  "Hct116" = cell_line_colours[7],
+  "K562" = cell_line_colours[8],
+  "MCF7" = cell_line_colours[9]
+)
+
+
+
+p2 <-all_colData%>%ggplot(aes(x=log2(counts_libsize),y=fullLengthCounts_libsize/counts_libsize,
+                              color = cellType,shape = protocol) ) + 
+  scale_shape_manual(values = c(16,17,4,15)) +
+  geom_point(,size =3,stroke=1)+ 
+  geom_vline(xintercept = log2(libsize_low_lim)) +
+  annotate(geom="text",x=log2(libsize_low_lim-50000),y=.55, label="Library size lower limit",angle='90')+
+  geom_hline(yintercept = 0.2) +
+  annotate(geom="text",x=23,y=.22, label="Full-length / all transcripts = 0.2",angle='0') +
+  theme(legend.position = "none")+ scale_color_manual(values= named_cell_line_colours) +
+  labs(x="Library size (log2, all transcript counts)",  y="Library size ratio \n (Full length transcripts)/(all transcripts)")
+
+ p2
+
+
+```
+
+
+Adjust plot limits for better representation of variability between samples
+
+```{r f1b_xlim}
+
+
+f1b <- p2+ coord_cartesian(xlim = c(16, 25))
+f1b
+```
+# Filter and calculate MDS features for selected samples (1c-1h)
+```{r select-samples}
+
+
+selected_samples <- analysis_se_no_ev[,(colData(analysis_se_no_ev)$counts_libsize>libsize_low_lim & colData(analysis_se_no_ev)$counts_libsize<libsize_high_lim) & (colData(analysis_se_no_ev)$fullLengthCounts_libsize/colData(analysis_se_no_ev)$counts_libsize  > 0.2 ) ]
+
+
+saveRDS(selected_samples,paste(output_path,"selected_samples_includePacbio.RDS",sep=""))
+selected_samples <- add_dimReductions(selected_samples,top =2000)
+
+selected_samples_all_colData <- data.frame(colData(selected_samples))
+```
+:::{.callout-note}
+The total number of samples quantified by bambu is `r dim(all_colData)[1]`. 
+After filtering out samples based on library size aand ratio of full length reads  (only include   `r libsize_low_lim` < transcripts library size < `r libsize_high_lim`,  and ratio of full length reads >0.2), there are `r dim(selected_samples_all_colData)[1]` samples included in the MDS plots presented in figure 1
+
+
+:::
+
+```{r selected_samples_MDS}
+
+
+
+
+p3 <-selected_samples_all_colData%>%ggplot(aes(gene_counts_mds_1, gene_counts_mds_2))  %>% 
+  mds_aes() + labs(x= "MDS_1",y= "MDS_2", title = "Gene counts") + scale_color_manual(values= named_cell_line_colours)
+
+p4 <-selected_samples_all_colData%>%ggplot(aes(gene_counts_mds_3, gene_counts_mds_4))  %>%
+  mds_aes() + labs(x= "MDS_3",y= "MDS_4", title = "Gene counts")
+
+p5 <-  selected_samples_all_colData%>%ggplot(aes(counts_mds_1, counts_mds_2)) %>%
+  mds_aes() + labs(x= "MDS_1",y= "MDS_2", title = "Transcript counts")
+
+p6 <- selected_samples_all_colData%>%ggplot(aes(counts_mds_3, counts_mds_4))  %>%
+  mds_aes() + labs(x= "MDS_3",y= "MDS_4", title = "Transcript counts")
+
+p7 <-  selected_samples_all_colData%>%ggplot(aes(fullLengthCounts_mds_1, fullLengthCounts_mds_2)) %>%
+  mds_aes() + labs(x= "MDS_1",y= "MDS_2", title = "Full length transcript counts")
+                                
+p8 <-  selected_samples_all_colData%>%ggplot(aes(fullLengthCounts_mds_3, fullLengthCounts_mds_4)) %>%
+  mds_aes() + labs(x= "MDS_3",y= "MDS_4", title = "Full length transcript counts")
+                                                                
+
+
+
+ MDSplots <-ggarrange( 
+  p3,p5,p7,p4 ,p6,p8, labels = c("c","e","g","d","f","h"),
+           ncol = 3,nrow = 2,
+  common.legend = TRUE, legend = "top"
+  )
+ 
+#MDSplots
+
+```
+
+
+##  Figure 1: Data overview
+
+```{r save_figure}
+
+
+  numPlots <- ggarrange( 
+  f1a,   f1b, labels="auto",common.legend = TRUE,legend = "left",
+  ncol = 2,nrow = 1
+  )
+ 
+
+pdf("allDataOverview_with_pacbio.pdf", width = 12, height = 12)
+ dataOverview <- ggarrange(numPlots,MDSplots,
+ nrow = 2,heights = c(1.2,3)          )
+  dataOverview
+  invisible(dev.off())
+  
+
+  png("allDataOverview_with_pacbio.png",width = 30, height = 30, units = "cm", 
+    bg = "white",res = 300)
+ dataOverview <- ggarrange(numPlots,MDSplots,
+ nrow = 2,heights = c(1.2,3)          )
+ 
+  dataOverview
+  invisible(dev.off())
+
+ 
+```
+::: {layout-ncol=1}
+![Figure 1:  a) Library size (number of mapped reads) in each sample, across preparation protocols and cell lines. The samples between the horizontal lines were retained for analysis. b) Fraction of full length transcript reads as a function of log2(library size). MDS plots of gene counts (c,d), total transcript counts (e,f) and full length transcript counts (g,h). Samples separate based on cell line (colour) but also on preparation protocol (shape) especially at the isoform level.   
+](allDataOverview_with_pacbio.png)
+:::
+:::{.callout-note}
+The total number of samples quantified by bambu is `r dim(all_colData)[1]`. 
+
+After filtering out samples based on library size  (only include   `r libsize_low_lim` < transcripts library size < `r libsize_high_lim`), there are `r dim(selected_samples_all_colData)[1]` samples included in the MDS plots.
+:::
+# Appendix
+## Samples list and exlusion criteria 
+### Create table 
+
+```{r}
+
+downloaded_samples_table <- data.frame(colData(analysis_se))%>%dplyr::mutate(sample_name =name,
+                                       library_size = counts_libsize,
+                                       cell_line = cellType, grouped_protocol = protocol )%>% 
+  dplyr::mutate (protocol = raw_protocol) %>% select(-c(raw_protocol,cellType,group,gene_counts_libsize))
+
+
+
+downloaded_samples_table$in_1a_b <-  downloaded_samples_table$cell_line != "MCF7-EV"
+downloaded_samples_table$in_1a_b <- ifelse(downloaded_samples_table$in_1a_b, "Yes", "No")
+
+
+
+downloaded_samples_table$exluded_from_1c_h <-  downloaded_samples_table$cell_line == "MCF7-EV" |
+  downloaded_samples_table$counts_libsize < libsize_low_lim | 
+                  downloaded_samples_table$counts_libsize > libsize_high_lim | 
+                  downloaded_samples_table$fullLengthCounts_libsize/downloaded_samples_table$counts_libsize < 0.2
+downloaded_samples_table$in_1c_h <- ifelse(downloaded_samples_table$exluded_from_1c_h, "No", "Yes")
+
+
+```
+```{r}
+ONTonly_samples <- "../../data/bambu_output/ont_only_counts/se_bambu_result.rds"
+
+ont_all_quantification_results <- readRDS(ONTonly_samples)
+ont_all_quantification_results <- add_dimReductions(ont_all_quantification_results,calc_mds = FALSE)
+ont_all_quantified_samples <- colData(ont_all_quantification_results)
+
+missinig_samples_names <- setdiff(ont_all_quantified_samples$name,downloaded_samples_table$name)
+missinig_samples_names
+```
+```{r}
+
+
+
+# Add values manually for now
+downloaded_samples_table[missinig_samples_names,] <- c("SGNex_A549_cDNAStranded_replicate3_run3","cDNAStranded",NA,NA,"SGNex_A549_cDNAStranded_replicate3_run3",NA,"A549","PCRcDNA","No",TRUE,"No")
+
+
+ont_all_quantified_samples <- ont_all_quantified_samples[,c("name","counts_libsize")]
+colnames(ont_all_quantified_samples) <- c("name", "ONTrun_counts_libsize")
+
+
+downloaded_samples_table <- downloaded_samples_table %>% full_join(data.frame(ont_all_quantified_samples),by =join_by("name"))
+
+
+downloaded_samples_table$in_sup1a_b <- downloaded_samples_table$grouped_protocol != "PacBio-SMRTcell" &
+                                      downloaded_samples_table$cell_line !="MCF7-EV"
+  
+downloaded_samples_table$in_sup1a_b <- ifelse(downloaded_samples_table$in_sup1a_b, "Yes", "No")
+
+selected_samples_ont_only_se_path <- "../../data/analysis_output/ont_only_counts/selected_samples.rds"
+
+ont_selected_samples_se<- readRDS( selected_samples_ont_only_se_path)
+downloaded_samples_table$in_sup1c_h <- downloaded_samples_table$name %in% colData(ont_selected_samples_se)$name 
+  
+
+
+
+downloaded_samples_table$exluded_from_DTU <- ! downloaded_samples_table$in_sup1c_h |
+                  all_colData$protocol == "PacBio-SMRTcell" | all_colData$protocol == "directcDNA" 
+
+  
+downloaded_samples_table$in_sup1c_h <- ifelse(downloaded_samples_table$in_sup1c_h,  "Yes","No")
+downloaded_samples_table$in_DE_fig2 <- downloaded_samples_table$in_sup1c_h 
+downloaded_samples_table$in_DTU_fig3 <- ifelse(downloaded_samples_table$exluded_from_DTU, "No", "Yes")
+
+```
+```{r}
+
+downloaded_samples_table <- downloaded_samples_table%>% 
+  select(-c(name,  exluded_from_1c_h,exluded_from_DTU, counts_libsize,fullLengthCounts_libsize ))  %>% 
+  relocate(c(protocol,grouped_protocol), .before = cell_line) # %>% relocate(c(protocol,grouped_protocol), .before = cell_line)
+
+
+downloaded_samples_table<- downloaded_samples_table[order(downloaded_samples_table$cell_line,downloaded_samples_table$protocol),]
+
+# Count number of samples included in each column
+yes_counts <- colSums(
+downloaded_samples_table  == "Yes", na.rm = TRUE)
+
+# Append to the bottom of the data frame
+downloaded_samples_table <- rbind(
+downloaded_samples_table , yes_counts)
+
+#Give the new row a clear row name
+rownames(downloaded_samples_table)[nrow(downloaded_samples_table)] <- "Total"
+
+
+```
+
+
+
+```{r sample_inclusion_table}
+
+
+knitr::kable(
+  x = downloaded_samples_table,
+  caption = paste0("Sample inclusion table"), row.names =FALSE
+)
+
+
+
+```
+
+## Auto format table to pdf (using latex)
+```{r}
+latex_table <- kable(downloaded_samples_table, row.names =FALSE,
+                     format = "latex",
+                     booktabs = TRUE,
+                     longtable = TRUE,
+                     escape = TRUE,
+                     caption = "Sample inclusion table",
+                     align = rep('c', ncol(downloaded_samples_table))) %>%  
+  kable_styling(latex_options = c("striped","hold_position", "repeat_header"),
+                font_size = 6,
+                full_width = FALSE,
+                position = "center")
+
+# Use landscape geometry instead of kableExtra's landscape()
+latex_doc <- paste0(
+  "\\documentclass{article}\n",
+  "\\usepackage[utf8]{inputenc}\n",
+  "\\usepackage{booktabs}\n",
+  "\\usepackage{longtable}\n",
+  "\\usepackage{array}\n",
+  "\\usepackage{colortbl}\n",
+  "\\usepackage{xcolor}\n",
+  "\\usepackage[landscape, margin=0.5in]{geometry}\n",
+  "\\begin{document}\n",
+  latex_table,
+  "\n\\end{document}"
+)
+
+# Write LaTeX file
+writeLines(latex_doc, "table1.tex")
+
+# Compile to PDF (requires tinytex or LaTeX installation)
+tinytex::pdflatex("table1.tex")
+
+```
+
+
+![Table 1: Sample inclusion table ](table1.pdf){width="100%"}
+
+## Session info
+
+```{r}
+sessionInfo()
+```

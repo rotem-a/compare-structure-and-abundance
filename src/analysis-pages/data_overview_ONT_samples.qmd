@@ -1,0 +1,460 @@
+---
+title: "2 Data overview ONT samples only <br> (Supp. Figure 1)"
+author: Rotem Aharon
+date: today
+params:
+  data_path: "../../data/"
+  project_path: "~/Code/manuscript-and-analysis-code/"
+  bambu_rds: "bambu_output/ont_only_counts/se_bambu_result.rds"
+  output_path: "../../data/analysis_output/ont_only_counts/"
+  figures_path: "figures/sup_figure1/"
+---
+SG-Nex data analysed here is publicly available from the SG-Nex database (Ying Chen et al. 2025). It was accessed in June 2025 at [registry.opendata.aws/sg-nex-data](https://registry.opendata.aws/sg-nex-data).
+ONT samples only quantification started from 100 .bam files (ONT samples only), which include read alignment to the human genome (hg38) for each of the replicates in each of the cell lines. 
+Then bambu ('bambu' v3.8.3 with NDR=0.1) was used to identify and quantify the genes and transcripts in all of the samples together. 
+
+This resulted in a SummarisedExperiment R object, from which this analysis page starts. It includes transcript counts and full length read counts as separate assays. Gene counts were obtained from it by using bambu::transcriptToGeneExpression() function, which effectively adds up all transcript counts for each gene. 
+
+### Setup, libraries and parameters {.unnumbered .unlisted}
+```{r setup, message = TRUE, warning = TRUE, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(tidy = 'formatR') 
+```
+
+
+```{r libraries, message = FALSE, warning = FALSE}
+library(tidyverse)
+# analysis pkgs
+library(limma)
+library(edgeR)
+library(SummarizedExperiment)
+library(bambu)
+
+# plotting tools
+library(ggplot2)
+library(gridExtra) 
+library(RColorBrewer)
+library(cowplot)
+library(ggpubr)
+library(patchwork)
+
+source("~/Code/manuscript-and-analysis-code/src/rscripts/needed_functions.R")
+```
+
+
+
+```{r set-parameters}
+
+data_path <- params$data_path
+project_path <- params$project_path
+
+figures_path <- params$figures_path
+output_path <- params$output_path
+  
+bambu_se_rds_file <- params$bambu_rds
+bambu_rds_path <- paste(data_path,bambu_se_rds_file,sep="")
+
+
+```
+
+
+ 
+### Load bambu output {.unnumbered .unlisted}
+SummarizedExperiment with bambu output is re-loaded here, then cell-line and preparation-protocols labels are obtained based on sample name. 
+
+ 
+```{r load-bambu-output} 
+data_path <- params$data_path
+
+bambu_se <- readRDS( bambu_rds_path)
+
+
+analysis_se <- bambu_se
+
+
+colData(analysis_se)$cellType <- as.factor(strsplit2(colData(analysis_se)$name,split="_")[,2])
+
+colData(analysis_se)$raw_protocol <- as.factor(strsplit2(colData(analysis_se)$name,split="_")[,3])
+
+#define (collapsed) protocols:
+colData(analysis_se)$protocol <- fct_collapse(colData(analysis_se)$raw_protocol,"PCRcDNA" = c("cDNA", "cDNAStranded"))
+
+#define groups based on cellType and  (collapsed) protocols:
+colData(analysis_se)$group <- as.factor(paste(colData(analysis_se)$cellType,colData(analysis_se)$protocol,sep = "_"))
+
+
+```
+
+# Library size (1a,1b)
+For each sample, obtain library size and calculate the MDS dimensional reduction with edgeR for each assay:  Gene counts, Transcript counts, and full length reads only counts.
+
+```{r calc-dim-reduction, message = FALSE, warning = FALSE}
+analysis_se <- add_dimReductions(analysis_se,calc_mds = FALSE)
+
+```
+
+
+
+## Library size (all transcript counts)
+```{r all-samples-libsize}
+
+libsize_low_lim=400000
+  
+libsize_high_lim=40000000
+all_colData <- data.frame(colData(analysis_se))
+
+# plot all library sizes in a boxplot
+f1a <- all_colData%>%ggplot(aes(cellType,log2(counts_libsize),color= protocol)) +
+  geom_boxplot() +
+  geom_jitter(shape=16, position=position_dodge(width = 0.75)) +
+  geom_hline(yintercept = log2(libsize_low_lim)) + 
+  geom_hline(yintercept = log2(libsize_high_lim)) + 
+  labs(x ="",y= "log2[library size (all transcript counts)") +
+  theme(legend.position = "none")
+
+f1a
+```
+Adjust plot limits for better representation of variability between samples
+```{r f1a_ylim}
+
+f1a <- f1a + coord_cartesian(ylim = c(14, 26.5))
+f1a
+
+```
+## full length to all count library size ratios
+```{r define-cellline-colours}
+
+cellLine_colors <- RColorBrewer::brewer.pal(9,"Oranges")
+#hex <- hue_pal()(6)
+cellLine_color_list = list("A549" = cellLine_colors[3],
+                           "H9" = cellLine_colors[4],
+                          "HEYA8" = cellLine_colors[5],
+                         "HepG2" = cellLine_colors[6],
+                         "Hct116" = cellLine_colors[7],
+                         "K562" =cellLine_colors[8],
+                         "MCF7" = cellLine_colors[9]
+                         )
+```
+
+
+```{r}
+
+p2 <-all_colData%>%ggplot(aes(x=log2(counts_libsize),y=fullLengthCounts_libsize/counts_libsize,color = cellType,shape = protocol) )+ 
+scale_shape_manual(values = c(16,17,4,15)) +
+  geom_point(,size =3,stroke=1)+ 
+  geom_vline(xintercept = log2(libsize_low_lim)) +
+  annotate(geom="text",x=log2(libsize_low_lim-50000),y=.55, label="Library size lower limit",angle='90')+
+  geom_hline(yintercept = 0.2) +
+  annotate(geom="text",x=23,y=.22, label="Full-length / all transcripts = 0.2",angle='0') +
+  theme(legend.position = "none") + scale_color_manual(values= named_cell_line_colours) + 
+  #theme(legend.position = "none")+ scale_color_manual(values= named_cell_line_colours) +
+  labs(x="Library size (log2, all transcript counts)",  y="Library size ratio \n (Full-length transcripts only)/(all transcripts)")
+
+ 
+ p2
+ 
+```
+
+Adjust plot limits for better representation of variability between samples
+
+```{r f1b_xlim}
+
+
+f1b <- p2+ coord_cartesian(xlim = c(16, 25))
+f1b
+```
+
+
+```{r}
+
+
+  lib_size_plots <- ggarrange( 
+  f1a,   f1b, labels="auto",common.legend = TRUE,legend = "left",
+  ncol = 2,nrow = 1
+  )
+
+
+```
+# Filter and calculate MDS features for selected samples (1c-1h)
+```{r}
+
+
+selected_samples <- analysis_se[,(colData(analysis_se)$counts_libsize>libsize_low_lim & colData(analysis_se)$counts_libsize<libsize_high_lim) & (colData(analysis_se)$fullLengthCounts_libsize/colData(analysis_se)$counts_libsize  > 0.2 ) ]
+
+
+#selected_samples <- analysis_se[,(colData(analysis_se)$counts_libsize>libsize_low_lim & colData(analysis_se)$counts_libsize<libsize_high_lim)]
+
+
+
+print(paste(output_path,"selected_samples.RDS",sep=""))
+saveRDS(selected_samples,paste(output_path,"selected_samples.RDS",sep=""))
+selected_samples <- add_dimReductions(selected_samples,top =2000)
+selected_samples_all_colData <- data.frame(colData(selected_samples))
+
+``` 
+:::{.callout-note}
+The total number of samples quantified by bambu is `r dim(all_colData)[1]`. 
+
+After filtering out samples based on library size aand ratio of full length reads  (only include   `r libsize_low_lim` < transcripts library size < `r libsize_high_lim`,  and ratio of full length reads >0.2), there are `r dim(selected_samples_all_colData)[1]` samples included in the MDS plots presented in sup. fig. 1.
+
+
+
+:::
+<!-- 
+```{r define-plot-settings}
+
+cellLine_colors <- RColorBrewer::brewer.pal(9,"Oranges")
+#hex <- hue_pal()(6)
+cellLine_color_list = list("A549" = cellLine_colors[3],
+                           "H9" = cellLine_colors[4],
+                          "HEYA8" = cellLine_colors[5],
+                         "HepG2" = cellLine_colors[6],
+                         "Hct116" = cellLine_colors[7],
+                         "K562" =cellLine_colors[8],
+                         "MCF7" = cellLine_colors[9]
+                         )
+
+
+              
+mds_aes <- function(.x, shapes = c(16,17,4,15),shape_var = "protocol", size_var = NULL) {
+
+
+if (!is.null(size_var))
+{
+.x +
+    geom_point(aes(color = cellType,shape =.data[[shape_var]],size =.data[[size_var]]) ,stroke=1)+ 
+    scale_shape_manual(values = shapes) +
+    theme(legend.position = "bottom",legend.box = "horizontal")    +   scale_color_manual(values= cellLine_color_list)      +
+    guides(shape = guide_legend(title.position = "top", nrow=1),color = guide_legend(title = "cell line",title.position = "top", nrow=1))
+} else {
+  .x +
+    geom_point(aes(color = cellType,shape =.data[[shape_var]]),size =4,stroke=1)+ 
+    scale_shape_manual(values = shapes) +
+    theme(legend.position = "bottom",legend.box = "horizontal")    +   scale_color_manual(values= cellLine_color_list)      +
+    guides(shape = guide_legend(title.position = "top", nrow=1),color = guide_legend(title = "cell line",title.position = "top", nrow=1))
+}
+}
+```
+
+ -->
+
+
+```{r selected_samples_MDS}
+
+
+
+p3 <-selected_samples_all_colData%>%ggplot(aes(gene_counts_mds_1, gene_counts_mds_2))  %>% mds_aes() + labs(x= "MDS_1",y= "MDS_2", title = "Gene counts")
+
+p4 <-selected_samples_all_colData%>%ggplot(aes(gene_counts_mds_3, gene_counts_mds_4))  %>% mds_aes() + labs(x= "MDS_3",y= "MDS_4", title = "Gene counts")
+
+p5 <-  selected_samples_all_colData%>%ggplot(aes(counts_mds_1, counts_mds_2)) %>% mds_aes() + labs(x= "MDS_1",y= "MDS_2", title = "Transcript counts")
+
+p6 <- selected_samples_all_colData%>%ggplot(aes(counts_mds_3, counts_mds_4))  %>% mds_aes() + labs(x= "MDS_3",y= "MDS_4", title = "Transcript counts")
+
+p7 <-  selected_samples_all_colData%>%ggplot(aes(fullLengthCounts_mds_1, fullLengthCounts_mds_2)) %>% mds_aes() + labs(x= "MDS_1",y= "MDS_2", title = "Full length transcript counts")
+                                
+p8 <-  selected_samples_all_colData%>%ggplot(aes(fullLengthCounts_mds_3, fullLengthCounts_mds_4)) %>% mds_aes() + labs(x= "MDS_3",y= "MDS_4", title = "Full length transcript counts")
+                                                                
+
+
+
+ MDSplots <-ggarrange( 
+  p3,p5,p7,p4 ,p6,p8, labels = c("c","e","g","d","f","h"),
+           ncol = 3,nrow = 2,
+  common.legend = TRUE, legend = "top"
+  )
+ 
+ 
+ 
+
+ trimmedMDSplots <-ggarrange( 
+  p3,p5,p4 ,p6,
+           ncol = 2,nrow = 2,
+  common.legend = TRUE, legend = "top"
+  )
+trimmedMDSplots
+library(ggpubr)
+
+ 
+
+pdf(paste0(figures_path,"/allDataOverview.pdf"), width = 12, height = 12)
+ dataOverview <- ggarrange(lib_size_plots,MDSplots,
+ nrow = 2,heights = c(1.2,3)          )
+  dataOverview
+  invisible(dev.off())
+  
+
+  png(paste0(figures_path,"/allDataOverview.png"),width = 30, height = 30, units = "cm", 
+    bg = "white",res = 300)
+ dataOverview <- ggarrange(lib_size_plots,MDSplots,
+ nrow = 2,heights = c(1.2,3)          )
+ 
+  dataOverview
+  invisible(dev.off())
+
+
+ #dataOverview
+ 
+ 
+```
+# Supplementary Figure 1
+![Figure 1: add caption](/figures/sup_figure1/allDataOverview.png)
+
+
+# Appendix 
+
+
+## Explore possible impact of library size and stransded cDNA join with cDNA
+Below we keep PCRcDNA and stranded PCR cDNA samples seperated, to view variation between them.
+
+### Library size based on all transcript counts 
+```{r all-samples-libsize-highlight_stranded}
+
+
+# plot all library sizes in a boxplot
+f1a <- all_colData%>%ggplot(aes(cellType,log2(counts_libsize),color= raw_protocol))+geom_boxplot() +
+  geom_jitter(shape=16, position=position_dodge(width = 0.75))+
+  geom_hline(yintercept = log2(libsize_low_lim)) +geom_hline(yintercept = log2(libsize_high_lim)) + labs(x ="",y= "log2[library size (all transcript counts)") +
+  theme(legend.position = "left")
+
+f1a
+```
+
+Adjust plot limits for better representation of variability between samples
+```{r f1a_ylim-highlight_stranded}
+
+f1a <- f1a + coord_cartesian(ylim = c(14, 26.5))
+f1a
+
+```
+
+### Plot ratio between full length to all transcript count library size
+```{r f1b-highlight_stranded}
+
+p2 <-all_colData%>%ggplot(aes(x=log2(counts_libsize),y=fullLengthCounts_libsize/counts_libsize,color = cellType,shape = raw_protocol) )+ 
+scale_shape_manual(values = c(16,1,17,4,15)) +
+  geom_point(,size =3,stroke=1)+ 
+  geom_vline(xintercept = log2(libsize_low_lim)) +
+  annotate(geom="text",x=log2(libsize_low_lim-50000),y=.55, label="Library size lower limit",angle='90')+
+  geom_hline(yintercept = 0.2) +
+  annotate(geom="text",x=23,y=.22, label="Full-length / all transcripts = 0.2",angle='0') +
+  theme(legend.position = "bottom") + scale_color_manual(values= named_cell_line_colours) + 
+  labs(x="Library size (log2, all transcript counts)",  y="Library size ratio \n (Full length transcripts)/(all transcripts)")
+
+ p2
+
+
+
+
+```
+
+
+Adjust plot limits for better representation of variability between samples
+
+```{r f1b_xlim-highlight_stranded}
+
+
+f1b_highlight_stranded <- p2+ coord_cartesian(xlim = c(16, 25))
+f1b_highlight_stranded
+```
+
+### MDS plots of selected samples
+
+
+
+```{r selected_samples_MDS-highlight_stranded}
+
+
+selected_samples_all_colData <- data.frame(colData(selected_samples))
+
+
+p3 <-selected_samples_all_colData%>%ggplot(aes(gene_counts_mds_1, gene_counts_mds_2))  %>% 
+mds_aes(shapes = c(16,1,17,4,15),shape_var = "raw_protocol",size_var = "gene_counts_libsize"  ) + 
+labs(x= "MDS_1",y= "MDS_2", title = "Gene counts") +
+guides(shape = guide_legend(title = "protocol",title.position = "top", nrow=2),
+color = guide_legend(title = "cell line",title.position = "top", nrow=2),
+size = guide_legend(title = "library size",title.position = "top", nrow=2))
+
+p4 <-selected_samples_all_colData%>%ggplot(aes(gene_counts_mds_3, gene_counts_mds_4))  %>% 
+mds_aes(shapes = c(16,1,17,4,15),shape_var = "raw_protocol",size_var = "gene_counts_libsize" ) + 
+labs(x= "MDS_3",y= "MDS_4", title = "Gene counts") +
+guides(shape = guide_legend(title = "protocol",title.position = "top", nrow=2),
+color = guide_legend(title = "cell line",title.position = "top", nrow=2),
+size = guide_legend(title = "library size",title.position = "top", nrow=2))
+
+p5 <-  selected_samples_all_colData%>%ggplot(aes(counts_mds_1, counts_mds_2)) %>% 
+mds_aes(shapes = c(16,1,17,4,15),shape_var = "raw_protocol", size_var = "counts_libsize") + 
+labs(x= "MDS_1",y= "MDS_2", title = "Isoform counts (all TX's)") +
+guides(shape = guide_legend(title = "protocol",title.position = "top", nrow=2),
+color = guide_legend(title = "cell line",title.position = "top", nrow=2),
+size = guide_legend(title = "library size",title.position = "top", nrow=2))
+
+p6 <- selected_samples_all_colData%>%ggplot(aes(counts_mds_3, counts_mds_4))  %>% 
+mds_aes(shapes = c(16,1,17,4,15),shape_var = "raw_protocol",size_var = "counts_libsize") + 
+labs(x= "MDS_3",y= "MDS_4", title = "Isoform counts (all TX's)") +
+guides(shape = guide_legend(title = "protocol",title.position = "top", nrow=2),
+color = guide_legend(title = "cell line",title.position = "top", nrow=2),
+size = guide_legend(title = "library size",title.position = "top", nrow=2))
+
+p7 <-  selected_samples_all_colData%>%ggplot(aes(fullLengthCounts_mds_1, fullLengthCounts_mds_2)) %>% 
+mds_aes(shapes = c(16,1,17,4,15),shape_var = "raw_protocol",size_var = "fullLengthCounts_libsize" ) + 
+labs(x= "MDS_1",y= "MDS_2", title = "Isoform counts (full length reads only)") +
+guides(shape = guide_legend(title = "protocol",title.position = "top", nrow=2),
+color = guide_legend(title = "cell line",title.position = "top", nrow=2),
+size = guide_legend(title = "library size",title.position = "top", nrow=2))
+                                
+p8 <-  selected_samples_all_colData%>%ggplot(aes(fullLengthCounts_mds_3, fullLengthCounts_mds_4)) %>% 
+mds_aes(shapes = c(16,1,17,4,15),shape_var = "raw_protocol",size_var = "fullLengthCounts_libsize" ) + 
+labs(x= "MDS_3",y= "MDS_4", title = "Isoform counts (full length reads only)") +
+guides(shape = guide_legend(title = "protocol",title.position = "top", nrow=2),
+color = guide_legend(title = "cell line",title.position = "top", nrow=2),
+size = guide_legend(title = "library size",title.position = "top", nrow=2))
+                                                                
+
+
+
+ MDSplots <-ggarrange( 
+  p3,p5,p7,p4 ,p6,p8, labels = c("c","e","g","d","f","h"),
+           ncol = 3,nrow = 2,
+  common.legend = TRUE, legend = "top"
+  )
+ 
+
+```
+
+
+###  Data overview w library size (Figure 1 v.3)
+
+```{r save_figure-highlight_stranded}
+
+
+  numPlots <- ggarrange( 
+  f1a,   f1b_highlight_stranded + theme(legend.position = "none"), labels="auto",common.legend = TRUE,legend = "left",
+  ncol = 2,nrow = 1
+  )
+
+
+pdf(paste0(figures_path,"/allDataOverview-highlight_stranded.pdf"), width = 12, height = 12)
+ dataOverview <- ggarrange(numPlots,MDSplots,
+ nrow = 2,heights = c(1.2,3)          )
+  dataOverview
+  invisible(dev.off())
+  
+
+  png(paste0(figures_path,"/allDataOverview-highlight_stranded.png"),width = 30, height = 30, units = "cm", 
+    bg = "white",res = 300)
+ dataOverview <- ggarrange(numPlots,MDSplots,
+ nrow = 2,heights = c(1.2,3)          )
+ 
+  dataOverview
+  invisible(dev.off())
+
+ 
+```
+::: {layout-ncol=1}
+![highlight_stranded](figures/sup_figure1/allDataOverview-highlight_stranded.png)
+:::
+## Session info
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,97 @@
+---
+title: "About"
+
+#date: 07-04-2026
+# subtitle: "These pages contain the code behind the analysis and the figures discussed in our recent manuscript submission"
+# abstract: "Previously, RNA sequencing required Reverse Transcription (RT) and PCR amplification. PCR amplification is known to induce biases associated with expression levels, transcript lengths and GC content. Biases introduced by the RT have been thoroughly described only recently, and their quantification has been more elusive. Oxford Nanopore Technology enables the direct sequencing of RNA without RT, and also the sequencing of cDNA without PCR amplification. This allows us to gain further insights into how different aspects of RNA preparation bias the data, with a new focus on isoforms structure and abundance. 
+# Using five cell line data sets from SG-NEx, we compared nanopore RNA sequencing of direct RNA (dRNA),  direct cDNA (dcDNA) and PRC amplified cDNA (PCR-cDNA).
+# Across all the cell lines we identified hundreds of Differentially Expressed (DE) genes and isoforms, indicating a significant change in the distribution of counts between the protocols. Furthermore, Differential Isoform Usage (DIU) was identified between protocols in hundreds of genes across cell lines, indicating significant changes in the measured isoform proportions. 
+# Analysis of DE genes and isoforms in the context of expression levels, sequence length and GC content showed as expected:  The largest number of DE isoforms is between the PCR samples and non-PCR samples, and they display the known amplification bias with respect to expression level, sequence length and GC content. 
+# We analysed the structural differences between isoform pairs that switch in dominance (i.e. DIU genes with exactly 2 DIU isoforms) between direct RNA and cDNA-PCR samples, and found that while some switching events relate to simple fragmentation/truncation of the RNA, most involve complex structural changes such as novel junctions, exon truncation, exon skipping and intron retention. (evidence of internal splicing differences rather than simply changes to the start or end of transcription)
+# "
+
+#citation: true
+#google-scholar: true
+format:
+  html:
+    number-sections: false
+---
+
+# Long read sequencing reveals changes in measured isoform structure and abundance due to RNA processing {.unlisted}
+
+*These pages contain the code for the analysis and generation of figures discussed in our recent manuscript [link (TBC)](https://docs.google.com/document/d/16eI1uMaECIc1KMZEll0TYrjy6GnyUv7v6HiJQy0dIao/edit?tab=t.0)*
+
+## Authors
+
+Rotem Aharon^1,2^,  Alicia Oshlack^1,2,3^ 
+
+## Affiliations
+
+1. Computational Biology Program, Peter MacCallum Cancer Centre, Parkville, VIC, Australia
+2. Sir Peter MacCallum Department of Oncology, University of Melbourne, Parkville, VIC, Australia
+3. School of Mathematics and Statistics, University of Melbourne, Parkville, VIC, Australia
+
+## Abstract
+Previously, RNA sequencing required Reverse Transcription (RT) and PCR amplification. PCR amplification is known to induce biases associated with expression levels, transcript lengths and GC content. Biases introduced by RT have been described more recently, and their quantification has been more elusive. Oxford Nanopore Technology (ONT) enables the direct sequencing of RNA without RT, and also the sequencing of cDNA without PCR amplification. This allows us to gain further insights into how different aspects of RNA preparation bias the data, with a new focus on isoforms structure and abundance. 
+
+Using seven cell line data sets from SG-NEx, we compare nanopore RNA sequencing of direct RNA (dRNA),  direct cDNA (dcDNA) and PCR amplified cDNA (PCRcDNA). Across all the cell lines we identify hundreds of Differentially Expressed (DE) genes and isoforms, indicating a significant change in observed expression between the protocols. Furthermore, we identify Differential Transcript Usage (DTU) between protocols in hundreds of genes across cell lines, indicating significant changes in the measured isoform proportions. 
+
+Analysis of DE genes and isoforms in the context of expression levels, sequence length and GC content shows that, as expected, the largest number of DE isoforms is between the PCR samples and non-PCR samples. DE isoforms display known amplification bias with respect to expression level, sequence length and GC content. Interestingly we also observe decreased counts after PCR associated with higher levels of the m6A methylation mark on the native RNA.
+
+We also analyse structural differences between isoforms that switch in dominance between direct RNA and PCR cDNA samples, and find that while some switching events relate to simple fragmentation/truncation of the RNA, most involve more complex structural differences including novel junctions, such as exon truncation, exon skipping and intron retention. When compared to differences found between background transcripts selected from non DTU genes, inserted introns (exitrons) are significantly more common in the isoforms after RT and amplification. Last, we find that visualisation of raw coverage data is a crucial step in the qualitative validation of experimental findings and should be included to validate analysis results.
+
+
+## Citation
+For attribution, please cite our work (DOI: TBC).
+
+**Long read sequencing reveals changes in measured isoform structure and abundance due to RNA processing**
+
+Rotem Aharon, Alicia Oshlack
+
+
+
+<!-- 
+##  Reproducibility
+### Reproducible Quarto Project with Anaconda and renv
+These pages contain the code for the analysis and the generation of figures presented and discussed in [ref our paper]. If you intend to re-run this analysis yourself, please note the comments below.
+
+- Raw data files or analysis output files are not included in this repository in order to reduce storage requirements.   
+- In order to re-run these pages raw data should be downloaded and raw_data_path should be input correctly.
+
+### Additional software
+
+This analysis further utilises the following: **bedtools**, **m6Anet**, **gffCompare**, **SQANTI3**. 
+You will need to have these installed. 
+
+### Environment Setup Instructions
+For the analysis to run, the environment needs to be set up correctly. Setup instructions are included below, this project uses:
+
+- **Anaconda**: For Python dependency management
+- **renv**: For R dependency management
+- **Quarto**: For unified document creation with both languages
+
+1. **Clone this repository**:
+```bash
+git clone [repo-url]
+cd [repo-directory]
+```
+
+2. **Set up Conda environment**
+```bash
+ conda env create -f environment.yml
+ conda activate quarto-project
+```
+
+3. **Set up  R environment with renv**
+```r
+# Launch R in the project directory
+renv::restore()
+```
+(or launch R with ' R -e "renv::restore()" ')
+4. **Render the Quarto document**
+Run this from the project's root directory where _quarto.yml is located.
+
+```bash
+quarto render
+```
+ -->

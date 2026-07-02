@@ -1,0 +1,123 @@
+% Source - https://tex.stackexchange.com/a/330103
+% Posted by user2574, modified by community. See post 'Timeline' for change history
+% Retrieved 2026-02-18, License - CC BY-SA 4.0
+
+\documentclass[varwidth,margin=1cm]{standalone}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{graphicx}
+
+\usepackage[T1]{fontenc}
+\usepackage[scaled]{helvet} % Loads Helvetica
+\scriptsize 
+
+
+\renewcommand{\familydefault}{\sfdefault} % Sets Helvetica as default
+
+
+
+\begin{document}
+\begin{figure}
+%\hspace{-1.2em}
+ %\makebox[\textwidth][l]{\scriptsize{Numbers of DTU features}}
+ 
+ 
+   
+\begin{subfigure}{0.9\textwidth}
+        \centering
+         \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\tiny a}}}%
+             \vspace{-1.6mm}
+          \tiny Number of DTU features detected between direct RNA and PCR cDNA samples
+   %     \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\scriptsize k}}}%
+        \includegraphics[width=\linewidth,height=3.5cm, keepaspectratio=false]{../../../src/analysis-pages/figures/figure3/fig3_top_panel.pdf}
+    \end{subfigure}
+          \vspace{-2.5mm}
+          
+  \begin{subfigure}[t]{0.2\textwidth}
+        \centering
+        \llap{\raisebox{0mm}{\textbf{\tiny b }}}%
+               \vspace{-2mm}
+      \tiny Transcript proportions (SSNA1)
+    %    \makebox[\linewidth][l]{\tiny \textbf{a} Proportions}
+        \includegraphics[width=\linewidth,height=2.5cm, keepaspectratio=false]{ENSG00000176101proportions_plot_no_title.pdf}          
+     %  \par\vspace{-1em}%
+       
+     %  \vspace{-5mm}  % Negative space to pull images closer
+    
+        {\llap{\raisebox{\dimexpr\height-2mm}{\textbf{\tiny c}}}
+         \vspace{-1.6mm}
+    \tiny Transcript counts (SSNA1)
+          \includegraphics[width=\linewidth,height=2.5cm, keepaspectratio=false]{ENSG00000176101cpm_plot_no_title.pdf}
+}     
+          \end{subfigure}    
+    \begin{subfigure}[t][6.05cm][t]{0.5\textwidth}
+        \centering
+           \llap{\raisebox{0mm}{\textbf{\tiny d }}}%
+               \vspace{-2mm}
+         \tiny Dominant transcripts are structurally different between protocols (SSNA1)
+        \includegraphics[width=\textwidth,height=5.3cm, keepaspectratio=false]{ENSG00000176101coverage_plot_A549zoomed_in_ordered.pdf}
+    \end{subfigure}
+      \begin{subfigure}[t][3cm][t]{0.2\textwidth}
+             \centering  
+              \llap{\raisebox{\dimexpr\height-2mm}{\textbf{\tiny e }}}%
+               \vspace{-1.5mm}
+           \tiny Fraction of DTU genes
+%\llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\scriptsize a}} \scriptsize {Numbers of DTU}\hspace{0.01em}}%%
+       \includegraphics[width=\linewidth,height=2.5cm, keepaspectratio=false]{../../../src/analysis-pages/figures/figure3/dtu_fraction_with_switching.png}
+  
+   %\vspace{- 5mm}
+   
+    {  
+      \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\tiny f}}}%
+        \vspace{-1.6mm}
+    \tiny SQANTI3 labels
+        \includegraphics[width=\linewidth,height=2.5cm, keepaspectratio=false]{new_sqanti3_label_numbers_in_switching_pairs.png} }
+    \end{subfigure}
+
+   \vspace{- 2.5mm}
+   
+ \begin{subfigure}{0.6\textwidth}
+        \centering
+        \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\tiny g}}}%
+            \vspace{-1.6mm}
+    \tiny Number of structural differences between transcripts switching in dominance
+        \includegraphics[width=\linewidth,height=4cm, keepaspectratio=false]{event_numbers_in_switching_pairs.png}
+    \end{subfigure}
+\begin{subfigure}{0.3\textwidth}
+        \centering
+        \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\tiny h}}}%
+            \vspace{-1.6mm}
+          \tiny Illustration of structural differences detected
+        \includegraphics[width=\linewidth,height=4cm, keepaspectratio=false]{/Users/rotem/Code/GitHub/sgnex-compare/code/analysis-pages/figures/figure3/events_list.png}
+    \end{subfigure}
+%     
+%    \begin{subfigure}{0.33\textwidth}
+%        \centering
+%        \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\scriptsize h}}}%
+%        \includegraphics[width=\linewidth,height=3.5cm, keepaspectratio=false]{sqanti3_label_numbers_in_switching_pairs.png}
+%    \end{subfigure}
+%    
+     
+\begin{subfigure}{0.5\textwidth}
+        \centering
+         \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\tiny i}}}%
+             \vspace{-1.6mm}
+          \tiny Frequencies of structural differences detected in switching and background genes 
+   %     \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\scriptsize k}}}%
+        \includegraphics[width=\linewidth,height=3.5cm, keepaspectratio=false]{internal_proportions.png}
+    \end{subfigure}
+    \begin{subfigure}{0.2\textwidth}
+        \centering
+        \includegraphics[width=\linewidth,height=3.5cm, keepaspectratio=false]{5prime_proportions.png}
+    \end{subfigure}
+    \begin{subfigure}{0.2\textwidth}
+        \centering
+%        \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\scriptsize j}}}%
+        \includegraphics[width=\linewidth,height=3.5cm, keepaspectratio=false]{3prime_proportions.png}
+    \end{subfigure}
+        
+    
+
+
+\end{figure}
+\end{document}

@@ -1,0 +1,978 @@
+---
+title: "3 Differential Expression between protocols <br>  (Figure 2)"
+author: Rotem Aharon
+date: today
+#subtitle: "15-04-2026<br>Rotem Aharon"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    collapsed: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    theme: readable
+    code_folding: "hide"
+  
+  pdf_document:
+    toc: true
+    number_sections: true
+    df_print: kable
+
+#| fig-width: 6
+#| fig-height: 4
+#| out-width: "70%"
+#| fig-align: "center"
+#| fig-cap: "My perfectly sized ggplot"
+params:
+  data_path: "../../data/ont_only_counts/"
+  project_path: "/Users/rotem/Code/GitHub/manuscript-and-analysis-code/"
+  output_path: "../../data/analysis_output/ont_only_counts/"
+  figures_prefix: "figures/figure2/"
+
+
+---
+Differential Expression analysis was performed separately for each cell line, with a design matrix constructed based on the sequencing protocol. For each of the seven cell lines, three count matrices were obtained from the relevant samples in the SummarisedExperiment which holds all the selected samples outlined above. For each of the count matrices  (gene counts, transcript counts, and transcript counts obtained based on full length read only), the raw reads were filtered to remove low expression, with min_count = 20 and min_total_count = 50 for genes counts, and min_count = 10, min_total_count = 20 for transcript counts.  After filtering, voomWithQualityWeights was utilised to adjust for varying sample quality, and a linear model was fitted with lmFit. Next, limma-voom::decideTest was used with p.value=0.05, and lf = 1.0 or 0.5 for genes and transcripts respectively, and topTables were obtained for each of the comparisons in each of the cell lines.
+
+### Setup, libraries and parameters {.unnumbered .unlisted}
+
+```{r setup, message = TRUE, warning = TRUE, include = FALSE}
+#output: 
+#  bookdown::html_document2
+#knitr::opts_chunk$set(echo = FALSE,message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(echo = TRUE,message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(tidy = 'formatR') 
+```
+
+
+
+```{r libraries, message = FALSE, warning = FALSE}
+# analysis pkgs
+library(limma)
+library(edgeR)
+#library(DRIMSeq)
+# plotting tools
+library(ggplot2)
+library(UpSetR)
+#library(ggbeeswarm)
+library(grid)
+library(gridExtra) 
+library(RColorBrewer)
+library(cowplot)
+#library(ggcorrplot)
+library(EnsDb.Hsapiens.v86)
+# other
+
+library(dplyr)
+library(SummarizedExperiment)
+library(ggpubr)
+library(patchwork)
+library(GGally)
+
+library(bambu)
+library(tidyverse)
+
+#source("/Users/rotem/Code/GitHub/long-read-compare-protocols/code/rscripts/needed_functions.R")
+source("~/Code/manuscript-and-analysis-code/src/rscripts/needed_functions.R")
+```
+
+ 
+### Load Data  {.unnumbered .unlisted}
+SummarizedExperiment with all ONT samples selected for DE analysis is re-loaded here. 
+Cell line and preparation protocol labels are already included in colData.
+
+
+ 
+```{r load-bambu-output} 
+
+output_path <- params$output_path
+selected_samples <- readRDS(paste(output_path,"selected_samples.RDS",sep=""))
+
+
+```
+
+
+### Preview gene biotypes {.unnumbered .unlisted}
+
+Add gene symbols (using EnsDb.Hsapiens.v86) to gene count matrixs
+
+
+```{r get-gene-counts}
+# Obtain gene counts 
+bambu_gene_counts <- transcriptToGeneExpression(selected_samples)
+gene_counts <- SE2DGEList(bambu_gene_counts)
+```
+
+
+
+
+```{r gene-symbols}
+#Add gene symbols 
+gene_ids <- row.names(gene_counts)
+
+# get gene information from ensemble data base
+gene_symbols <- AnnotationDbi::select(EnsDb.Hsapiens.v86, keys=gene_ids, keytype="GENEID" , columns =  c("ENTREZID","SYMBOL","GENENAME","GENEBIOTYPE"))
+
+# keep bambu gene info too:
+bambu_gene_info <- data.frame(rowData(bambu_gene_counts))
+
+# join gene symbols with bambu gene info
+joint_gene_info <-  bambu_gene_info %>% left_join(gene_symbols%>%distinct())
+ 
+# simple bar plot
+ggplot( joint_gene_info,aes(x=factor(GENEBIOTYPE), fill = newGeneClass)) + geom_bar() + labs(title="Gene types", fill="Gene label (bambu)") + theme(legend.position = "right", axis.text.x =  element_text(angle =90)) + coord_flip()
+
+
+```
+:::{.callout-note}
+The total number of genes identified and quantified by bambu in the samples selected for analysis is `r dim(gene_counts$genes)[1]`. 
+Out of these `r colSums(gene_counts$genes !="annotation")["newGeneClass"]` are novel genes (in blue above).
+
+Out of the `r colSums(gene_counts$genes == "annotation")["newGeneClass"]` ENSEMBEL (known) genes detected, `r dim(joint_gene_info[is.na(joint_gene_info$GENEBIOTYPE) & joint_gene_info$newGeneClass =="annotation",])[1] ` do not have a gene type specified in EnsDb.Hsapiens.v86
+
+:::
+All gene types are kept and considered in this analysis, since we aim to find all significant diferences in expression across all gene types (includingin un-annotated and novel genes). 
+
+
+# Test for Differential Expression 
+Using limma-voom, implement an independent desing matrix for each cell-line.
+## DE tests
+
+```{r, test-single-cell-line}
+
+
+cell_line <- "A549"
+assay_name <- "counts"
+assay_prefix <- assay_name  
+
+single_cell_line_de_test <- function(all_selected_samples,cell_line,assay_name) {
+
+    cell_line_se <- all_selected_samples[,colData(selected_samples)$cellType ==  cell_line]
+  
+    protocol_ <- colData(cell_line_se)$protocol
+  
+    design <- model.matrix(~0 +  protocol_)
+  
+    # Define a single design for all three contrasts
+    protocols_contrasts = makeContrasts( dRNAvsdcDNA = protocol_directRNA -  protocol_directcDNA,
+                                       dcDNAvsPCRcDNA = protocol_directcDNA -  protocol_PCRcDNA,
+                                       dRNAvsPCRcDNA = protocol_directRNA -  protocol_PCRcDNA,
+                                       levels=colnames(design) )
+
+    
+    
+    # Run limma voom with different filter parameters for each assay
+    de_test_params <- list(
+      "gene_counts" = list(lfc= 1., min_count = 20, min_total_count = 50),
+      "counts" = list(lfc = 0.5, min_count = 10, min_total_count = 20),
+      "fullLengthCounts" = list(lfc = 0.5, min_count = 10, min_total_count = 20)
+    )
+    
+    if (assay_name =="gene_counts"){
+      
+      # prep count matrix for DE
+      genes_se <- transcriptToGeneExpression(cell_line_se)
+      current_counts <- SE2DGEList(genes_se)
+     
+      
+    }  else {
+      
+      current_assay_counts <- assay(cell_line_se ,assay_name)
+      current_assay_counts [current_assay_counts < 0.5] <- 0.0
+      current_counts <- DGEList(round(current_assay_counts),samples = colData(cell_line_se))
+    }
+       # run DE test on relevant assay data 
+      params <- de_test_params[[assay_name]]
+      cell_line_DElabels <- do.call(de_filter_fit_test,c(list(current_counts ,design,protocols_contrasts,return_fit = TRUE),params))#lfc = 0.5, min_count = 10, min_total_count = 20)
+   
+      
+ return(list(de_labels = cell_line_DElabels))   
+    
+    
+}
+    
+    #counts_res <- indvCellDE(current_counts,assay_prefix)   
+
+```
+```{r}
+
+cell_line_names <- c("A549", "MCF7","H9","HepG2","Hct116","HEYA8","K562")
+assays_to_test <- c("gene_counts","counts","fullLengthCounts")
+ 
+
+param_combinations <- expand.grid(
+  cell_line = cell_line_names,
+  assay_name = assays_to_test,
+  stringsAsFactors = FALSE
+)
+
+fixed_params <- list(all_selected_samples = selected_samples)
+                    
+results <- mapply(
+  FUN = single_cell_line_de_test,
+  cell_line = param_combinations$cell_line,
+  assay_name = param_combinations$assay_name,
+  MoreArgs = fixed_params,
+  SIMPLIFY = FALSE
+)
+    
+#topTable(results$A549_gene_counts$de_labels$efit, coef =1, number=Inf)
+names(results) <- paste0(param_combinations$cell_line, "_", param_combinations$assay_name)
+#results$A549$de_labels$decide_results
+new_de_labels <- map_dfr(results, ~.x$de_labels$decide_results%>%
+                           add_column(AveExpr =topTable(.x$de_labels$efit, coef ="dRNAvsdcDNA", number=Inf, sort.by = "none")$AveExpr),
+                         .id = "source") 
+
+new_de_labels <- new_de_labels %>% separate_wider_delim(source,"_",names=c("cell_line","assay"),too_many = "merge")
+
+new_de_labels_longer <- new_de_labels%>%pivot_longer(-c( feature_id,cell_line ,assay,AveExpr))
+```
+
+## Differential Gene Expression
+### Figure 2a
+```{r}
+
+library(scales)
+hex <- hue_pal()(6)
+colors_allocation_list = list("directRNA" = hex[5],"directcDNA" = hex[3],"PCRcDNA" = hex[1],"dcDNAvsPCRcDNA" = hex[2],"dRNAvsdcDNA" = hex[4],"dRNAvsPCRcDNA" = hex[6])
+
+contrasts_order = c("dRNAvsPCRcDNA" ,"dcDNAvsPCRcDNA", "dRNAvsdcDNA")
+
+case_prefix <- "gene_counts"
+
+
+longer_de_labels <- new_de_labels_longer%>%mutate(contrast = name ) %>%dplyr::filter(assay ==case_prefix)
+de_genes_fraction <-longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::select(c( contrast,cell_line,value)) %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%
+  group_by(cell_line,contrast,value)%>%mutate(n = n())%>%dplyr::filter(value !=0)%>%
+  ggplot(aes(x = cell_line,y=n/number_tested ,fill=factor(contrast, levels = contrasts_order))) + geom_bar(stat ="identity",position =position_dodge()) + scale_fill_manual(values=colors_allocation_list) + labs(y="Fraction of DE genes",x="",fill ="")
+de_genes_fraction
+
+
+
+de_genes_num <- longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::select(c( contrast,cell_line,value)) %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%dplyr::filter(value !=0)%>%      group_by(cell_line,contrast,value)%>%mutate(n = n())%>%
+    ggplot(aes(x = cell_line,y=n ,fill=factor(contrast, levels = contrasts_order))) + geom_bar(stat ="identity",position =position_dodge()) + scale_fill_manual(values=colors_allocation_list) +
+ labs(y="Genes",x="",fill ="") + theme_pubr()# 
+
+de_genes_num  <- de_genes_num + theme(legend.position = "bottom")
+
+de_genes_num 
+```
+
+### Supp. Figure 2c (genes)
+<!---
+```{r}
+
+
+longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::select(c( feature_id,contrast,cell_line,value))%>%# %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%
+  filter(value !=0)%>% group_by(contrast,feature_id)%>%mutate(de_contrasts_num = sum(abs(value)))%>%group_by(contrast,cell_line,de_contrasts_num)%>%summarise(sum = n())%>%
+  ggplot(aes(x =cell_line,y=sum,fill = factor(de_contrasts_num))) + geom_bar(stat ="identity",position = "stack") + 
+  labs(title = "gene count",y="number of DE features",fill="# of cell-lines feature is DEsig in") + facet_grid(rows = vars(factor(contrast, levels = contrasts_order)),scales ="free") +scale_fill_brewer(palette = "Blues")# 
+
+```
+--->
+```{r}
+longer_de_labels_grouped <- longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::filter(value !=0)%>% dplyr::select(c( feature_id,contrast,cell_line,value))%>%# %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%
+  #filter(value !=0)%>% 
+  group_by(contrast,feature_id)%>%mutate(de_contrasts_num = sum(abs(value)))
+
+longer_de_labels_grouped$collapsed_de_contrasts_num <- fct_collapse(
+factor(longer_de_labels_grouped$de_contrasts_num),"0" =c(0),"1" = c(1),"2-4" = c(2,3,4),"5-7"=c(5,6,7))
+
+sup_fig2a_genes <- longer_de_labels_grouped%>%group_by(contrast,cell_line,collapsed_de_contrasts_num)%>%summarise(sum = n())%>%
+  ggplot(aes(x =cell_line,y=sum,fill = factor(collapsed_de_contrasts_num ))) + geom_bar(stat ="identity",position = "stack") +  geom_text(aes(label = sum), 
+            position = position_stack(vjust = 0.5), size = 2) +
+  labs(y="Genes",x="",fill="Number of cell-lines") + facet_grid(cols = vars(factor(contrast, levels = contrasts_order)),scales ="free") + theme(axis.text.x = element_text(size = 6,angle = 30),legend.position = "bottom")+scale_fill_brewer(palette = "Oranges") # 
+
+sup_fig2a_genes
+
+#sup_fig2a_genes +theme_pubr() + theme(axis.text.x =element_text(size = 6,angle = 30))
+
+
+```
+Test adding numbers of features tested on second y
+```{r}
+
+longer_de_labels_grouped <- longer_de_labels %>%dplyr::filter(!is.na(value)) %>% dplyr::select(c( feature_id,contrast,cell_line,value))%>%# %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%
+  #filter(value !=0)%>% 
+  group_by(contrast,feature_id)%>%mutate(de_contrasts_num = sum(abs(value))) 
+longer_de_labels_grouped$collapsed_de_contrasts_num <- fct_collapse(
+factor(longer_de_labels_grouped$de_contrasts_num),"0" =c(0),"1" = c(1),"2-4" = c(2,3,4),"5-7"=c(5,6,7))
+
+test_colors <- c(RColorBrewer::brewer.pal(9,"Oranges")[2],RColorBrewer::brewer.pal(9,"Oranges")[5],RColorBrewer::brewer.pal(9,"Oranges")[9])
+
+longer_de_labels_grouped%>%group_by(contrast,cell_line)%>%summarise(features_tested = n())%>%ungroup()
+
+
+sup_fig2a_genes_sec_y <-  left_join(
+  longer_de_labels_grouped%>%dplyr::filter(value !=0)%>% group_by(contrast,cell_line,collapsed_de_contrasts_num)%>%summarise(sum = n())%>%ungroup(),
+  longer_de_labels_grouped%>%group_by(contrast,cell_line)%>%summarise(features_tested = n())%>%ungroup(),by = join_by(contrast,cell_line)) %>%
+  ggplot(aes(y=sum,x =cell_line)) + 
+  geom_bar(aes(fill = factor(collapsed_de_contrasts_num )),stat ="identity",position = "stack") + 
+ # theme_minimal() +
+  #geom_text(aes( label = sum,y =sum),  position = position_dodge( 4.7), size = 3) +
+  geom_text(aes(label = sum), position =  position_stack(vjust = 0.5), size = 2) +
+  labs(y="Genes",x="",fill="Number of cell-lines") + facet_grid(cols = vars(factor(contrast, levels = contrasts_order)),scales ="free") + 
+  theme(axis.text.x = element_text(size = 5,angle = 30),
+        legend.position = "bottom",
+        axis.title.y.right = element_text(color = "darkblue")) +
+  #scale_fill_manual( values = RColorBrewer::brewer.pal(4,"Oranges")[2:4]) +coord_cartesian(ylim =c(0,2600) ) +   
+  scale_fill_brewer(palette = "Oranges") +
+  geom_point(aes(y=features_tested/7),shape = 4,color="darkblue") +
+  scale_y_continuous(
+    name = "Genes",
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*7, name="Number of genes tested")
+  )  
+
+sup_fig2a_genes_sec_y
+
+```
+### Supp. Figure 2d (Genes)
+```{r}
+
+longer_de_labels_grouped_by_cellline <- longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::select(c( feature_id,contrast,cell_line,value))%>%# %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%
+  filter(value !=0)%>%
+  group_by(cell_line,feature_id)%>%mutate(de_contrasts_num = sum(abs(value)))
+
+sup_fig2b_genes <- longer_de_labels_grouped_by_cellline%>%group_by(cell_line,contrast,de_contrasts_num)%>%summarise(sum = n())%>%
+  ggplot(aes(x =factor(contrast, levels = contrasts_order),y=sum,fill =factor( de_contrasts_num))) + 
+  geom_bar(stat ="identity",position = "stack") +
+  geom_text(aes(label = sum),  position = position_stack(vjust = 0.5), size = 2) +
+  labs(y="Genes",x="",fill="Number of contrasts") + facet_grid(cols = vars(cell_line)) +
+  theme(axis.text.x = element_text(angle=30, size = 5), legend.position = "bottom") +
+  scale_fill_brewer(palette = "Blues")# + coord_cartesian(ylim=c(0,4000))# 
+sup_fig2b_genes #<- sup_fig2b_genes +  scale_y_log10()
+
+
+
+
+```
+## Diferential Transcript Expression
+
+### Figure 2b
+```{r}
+
+
+
+case_prefix <- "counts"
+
+de_labels <- read.csv(paste(output_path,"jointDElabels_lfc05","_",case_prefix,".csv",sep = ""))
+
+de_labels  <- new_de_labels_longer%>%rename(contrast = name ) %>%dplyr::filter(assay ==case_prefix)
+longer_de_labels <- de_labels
+
+de_tx_fraction <- longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::select(c( contrast,cell_line,value)) %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%
+  group_by(cell_line,contrast,value)%>%mutate(n = n())%>%dplyr::filter(value !=0)%>%
+  ggplot(aes(x = cell_line,y=n/number_tested ,fill=factor(contrast, levels = contrasts_order))) + geom_bar(stat ="identity",position =position_dodge()) + scale_fill_manual(values=colors_allocation_list) + labs(y="Fraction of DE transcripts",x="",fill ="") 
+de_tx_fraction
+de_tx_number <- longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::select(c( contrast,cell_line,value)) %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%dplyr::filter(value !=0)%>%      group_by(cell_line,contrast,value)%>%mutate(n = n())%>%
+    ggplot(aes(x = cell_line,y=n ,fill=factor(contrast, levels = contrasts_order))) + geom_bar(stat ="identity",position =position_dodge()) + scale_fill_manual(values=colors_allocation_list) +
+  labs(y="Transcripts",x="",fill ="") + theme_pubr()# 
+
+de_tx_number <- de_tx_number + theme(legend.position = "bottom")
+de_tx_number
+```
+### Supp. Figure 2c-d (Transcripts)
+```{r}
+
+
+longer_de_labels_grouped <- longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::filter(value !=0)%>% dplyr::select(c( feature_id,contrast,cell_line,value))%>%# %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%
+  #filter(value !=0)%>% 
+  group_by(contrast,feature_id)%>%mutate(de_contrasts_num = sum(abs(value)))
+
+longer_de_labels_grouped$collapsed_de_contrasts_num <- fct_collapse(
+factor(longer_de_labels_grouped$de_contrasts_num),"0" =c(0),"1" = c(1),"2-4" = c(2,3,4),"5-7"=c(5,6,7))
+
+
+sup_fig2a_tx <- longer_de_labels_grouped%>%group_by(contrast,cell_line,collapsed_de_contrasts_num)%>%summarise(sum = n())%>%
+  ggplot(aes(x =cell_line,y=sum,fill = factor(collapsed_de_contrasts_num ))) + geom_bar(stat ="identity",position = "stack") +  geom_text(aes(label = sum), 
+            position = position_stack(vjust = 0.5), size = 2) +
+  labs(y="Transcripts",x="",fill="Number of cell-lines") + facet_grid(cols = vars(factor(contrast, levels = contrasts_order)),scales ="free") + theme(axis.text.x = element_text(size = 6,angle = 30))+scale_fill_brewer(palette = "Oranges")+theme(legend.position = "bottom") # 
+
+sup_fig2a_tx
+
+
+longer_de_labels_grouped_by_cellline <- longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::select(c( feature_id,contrast,cell_line,value))%>%# %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%
+  filter(value !=0)%>%
+  group_by(cell_line,feature_id)%>%mutate(de_contrasts_num = sum(abs(value)))
+
+sup_fig2b_tx<-longer_de_labels_grouped_by_cellline%>%group_by(cell_line,contrast,de_contrasts_num)%>%summarise(sum = n())%>%
+  ggplot(aes(x =factor(contrast, levels = contrasts_order),y=sum,fill =factor( de_contrasts_num))) + geom_bar(stat ="identity",position = "stack") + 
+  geom_text(aes(label = sum),  position = position_stack(vjust = 0.5), size = 2) +
+  labs(y="Transcripts",x="",fill="Number of contrasts") + facet_grid(cols = vars(cell_line)) + theme(axis.text.x = element_text(angle=30, size = 5),legend.position = "bottom") +scale_fill_brewer(palette = "Blues")# + coord_cartesian(ylim=c(0,4000))# 
+
+sup_fig2b_tx
+
+```
+
+## Differential trasncript expression (full length)
+### Figure 2c 
+
+```{r}
+
+
+
+case_prefix <- "fullLengthCounts"
+
+longer_de_labels <- new_de_labels_longer%>%rename(contrast = name ) %>%dplyr::filter(assay ==case_prefix)
+
+#longer_de_labels <- de_labels%>%pivot_longer(-c(X,feature_id))%>%separate_wider_delim(name,names =c("cell_line","contrast","label"),delim ="_")
+
+de_full_length_fraction <-longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::select(c( contrast,cell_line,value)) %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%
+  group_by(cell_line,contrast,value)%>%mutate(n = n())%>%dplyr::filter(value !=0)%>%
+  ggplot(aes(x = cell_line,y=n/number_tested ,fill=factor(contrast, levels = contrasts_order))) + geom_bar(stat ="identity",position =position_dodge()) + scale_fill_manual(values=colors_allocation_list) + labs(y="Fraction of DE features \nfull length reads",x="")#facet_grid(rows = values(assay))
+de_full_length_fraction
+de_full_length_number <-longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::select(c( contrast,cell_line,value)) %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%dplyr::filter(value !=0)%>%      group_by(cell_line,contrast,value)%>%mutate(n = n())%>%
+    ggplot(aes(x = cell_line,y=n ,fill=factor(contrast, levels = contrasts_order))) + geom_bar(stat ="identity",position =position_dodge()) + scale_fill_manual(values=colors_allocation_list) +
+  labs(y="Transcripts \n (full length reads)",x="", fill="")+ theme_pubr()# 
+
+de_full_length_number + theme(legend.position = "bottom")
+
+# 
+# longer_de_labels %>%dplyr::filter(!is.na(value)) %>%select(c( contrast,cell_line,value)) %>% group_by(cell_line,contrast)%>%mutate(number_tested = n()) %>%ggplot(x=assay)
+```
+### Supp. Figure 2c-d (full length transcripts)
+```{r}
+
+
+longer_de_labels_grouped <- longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::filter(value !=0)%>% dplyr::select(c( feature_id,contrast,cell_line,value))%>%# %>% 
+  group_by(contrast,feature_id)%>%mutate(de_contrasts_num = sum(abs(value)))
+
+longer_de_labels_grouped$collapsed_de_contrasts_num <- fct_collapse(
+factor(longer_de_labels_grouped$de_contrasts_num),"0" =c(0),"1" = c(1),"2-4" = c(2,3,4),"5-7"=c(5,6,7))
+
+
+sup_fig2a_tx_fl <- longer_de_labels_grouped%>%group_by(contrast,cell_line,collapsed_de_contrasts_num)%>%summarise(sum = n())%>%
+  ggplot(aes(x =cell_line,y=sum,fill = factor(collapsed_de_contrasts_num ))) + geom_bar(stat ="identity",position = "stack") +  geom_text(aes(label = sum), 
+            position = position_stack(vjust = 0.5), size = 2) +
+  labs(y="Transcripts \n (full length reads)",x="",fill="Number of cell-lines") + facet_grid(cols = vars(factor(contrast, levels = contrasts_order)),scales ="free") + theme(axis.text.x = element_text(size = 6,angle = 30))+scale_fill_brewer(palette = "Oranges")+theme(legend.position = "bottom") # 
+
+sup_fig2a_tx_fl
+
+
+
+longer_de_labels_grouped_by_cellline <- longer_de_labels %>%dplyr::filter(!is.na(value)) %>%dplyr::select(c( feature_id,contrast,cell_line,value))%>%# %>% group_by(cell_line,contrast)%>%mutate(number_tested = n())%>%ungroup()%>%
+  filter(value !=0)%>%
+  group_by(cell_line,feature_id)%>%mutate(de_contrasts_num = sum(abs(value)))
+
+#sup_fig2b_tx_fl <-longer_de_labels_grouped_by_cellline%>%group_by(cell_line,contrast,de_contrasts_num)%>%summarise(sum_contrasts_num = n(),.groups = "drop")%>%
+#  ggplot(aes(x =factor(contrast, levels = contrasts_order),y=sum_contrasts_num,fill =factor( de_contrasts_num))) + geom_col(position = "dodge") + 
+#  geom_text(aes(label = sum_contrasts_num),  position = position_dodge(width = 0.9), vjust = 0.5, size = 2) +
+#  labs(y="Transcripts \n (full length reads)",x="",fill="Number of contrasts") + facet_grid(cols = vars(cell_line)) + theme(axis.text.x = element_text(angle=30, size = 5)) +scale_fill_brewer(palette =  #"Blues")# + coord_cartesian(ylim=c(0,4000))# 
+#sup_fig2b_tx_fl + scale_y_log10()
+
+
+sup_fig2b_tx_fl <-longer_de_labels_grouped_by_cellline%>%group_by(cell_line,contrast,de_contrasts_num)%>%summarise(sum_contrasts_num = n(),.groups = "drop")%>%
+  ggplot(aes(x =factor(contrast, levels = contrasts_order),y=sum_contrasts_num,fill =factor( de_contrasts_num))) + geom_col(position = "stack") + 
+  geom_text(aes(label = sum_contrasts_num),  position = position_stack(vjust = 0.5), size = 2) +
+  labs(y="Transcripts \n (full length reads)",x="",fill="Number of contrasts") + facet_grid(cols = vars(cell_line)) + theme(axis.text.x = element_text(angle=30, size = 5)) +scale_fill_brewer(palette = "Blues")# + coord_cartesian(ylim=c(0,4000))# 
+sup_fig2b_tx_fl #<- sup_fig2b_tx_fl + scale_y_continuous(trans='log2')
+
+
+
+#temp_sums <-longer_de_labels_grouped_by_cellline%>%group_by(cell_line,contrast,de_contrasts_num)%>%summarise(sum_contrasts_num = n(),.groups = "drop")%>% mutate(log2_sum = log2(sum_contrasts_num ))
+# temp_sums %>% ggplot(aes(x =factor(contrast, levels = contrasts_order),y=log2_sum,fill =factor( de_contrasts_num))) + geom_bar(stat = "identity", position = "stack") + 
+#  geom_text(aes(label = sum_contrasts_num), position = position_stack(vjust = 0.5), size = 2) +
+#  labs(y="Transcripts \n (full length reads)",x="",fill="Number of contrasts") + facet_grid(cols = vars(cell_line)) + theme(axis.text.x = element_text(angle=30, size = 5)) +scale_fill_brewer(palette = #"Blues")# + coord_cartesian(ylim=c(0,4000))# 
+
+
+
+
+```
+
+
+## Create panel 2a-c {.unnumbered .unlisted}
+
+```{r}
+
+
+  de_numbers <- ggarrange( 
+  de_genes_num+theme_pubr()+ theme(axis.text.x = element_text(angle =30)),   de_tx_number+theme_pubr()+ theme(axis.text.x = element_text(angle =30)),de_full_length_number+ theme(axis.text.x = element_text(angle =30)), labels="auto",common.legend = TRUE,legend = "bottom",
+  ncol = 3,nrow = 1
+  ) 
+
+  #de_numbers <- de_numbers +  plot_annotation(title = "Number of DE features")
+  
+  # library(patchwork)
+  # 
+  de_numbers <- (de_genes_num|de_tx_number | de_full_length_number) +  plot_layout(guides = "collect") +
+  plot_annotation(title = "Numbers of DE features",tag_levels = 'a')&theme(
+      plot.tag = element_text(
+        size = 14, 
+        face = "bold", 
+        color = "black",
+        hjust = 0,
+        vjust = 1
+      ),
+      plot.tag.position = "topleft",
+   legend.position = "bottom", axis.text.x = element_text(angle = 30, size = 6))
+  de_numbers
+```
+
+
+
+## Create panel sup.2c-d {.unnumbered .unlisted}
+
+```{r}
+
+margin_theme <- theme(
+  plot.margin = margin(t = 1, r = 3, b = 1, l = 3, unit = "pt"),  # Very small margins
+  panel.spacing = unit(0.1, "cm")
+)
+
+  left_col <- ggarrange( 
+  sup_fig2a_genes + margin_theme  , sup_fig2a_tx +margin_theme, sup_fig2a_tx_fl  + margin_theme,
+  labels = c("c"," "," "),common.legend = TRUE,legend = "bottom",
+  ncol = 1,nrow = 3
+  )
+ left_col 
+ 
+ right_col <- ggarrange( 
+  sup_fig2b_genes + margin_theme  , sup_fig2b_tx+ margin_theme,sup_fig2b_tx_fl+ margin_theme,
+  labels = c("d"," "," "),common.legend = TRUE,legend = "bottom",
+  ncol = 1,nrow = 3
+  )
+ 
+ 
+ lower_panel <- ggarrange( 
+  left_col +  plot_annotation(title = "Concordance of DE features between cell lines") ,
+  right_col +  plot_annotation(title = "Concordance of DE features between protocol comparissons"),
+  labels=c("",""),
+  ncol = 2,nrow = 1
+  )
+ lower_panel#%>%ggexport(width =20,height = 10)
+```
+
+
+
+# Investigate biases 
+
+
+```{r}
+
+
+
+all_de_labels <- new_de_labels
+
+
+longLabels <- all_de_labels %>% 
+    pivot_longer(contains("vs"), values_to = "DE_label", names_to = "contrast") %>% dplyr::filter(!is.na(DE_label))%>%
+    dplyr::filter(contrast == "dRNAvsPCRcDNA")
+
+
+
+```
+
+
+
+## Mean Expression (sup.2b transcript counts)
+
+Mean Expression presents values obtained in the topTables output for Differential Transcript Expression tests, stratified by DE label.
+P-values are obtained using a two-tailed t.test with respect to the non DE group (ns: p > 0.05, \*: p <= 0.05, \*\*: p <= 0.01, \*\*\*: p <= 0.001, and \*\*\*\*: p <= 0.0001).
+
+
+```{r}
+
+
+varToPlot <- "AveExpr"
+p <- ggboxplot(longLabels, x = "DE_label", y = varToPlot,
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = c("assay","cell_line"), short.panel.labs = TRUE)
+
+
+
+p1 <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "0",label.y = 0.5) +scale_fill_manual(values=colors_allocation_list) + # + fill=factor(contrast, levels = 
+facet_grid(cols = vars(cell_line), rows = vars(factor(assay , levels = c("gene_counts","counts","fullLengthCounts"))))
+ 
+
+ave_expr_plot <- p1 + labs(title = "Average Expression across cell lines and assays") + coord_cartesian(ylim = c(1,10))
+
+ave_expr_plot
+
+```
+```{r}
+
+
+
+all_de_labels <- new_de_labels
+
+
+longLabels <- all_de_labels %>% 
+    pivot_longer(contains("vs"), values_to = "DE_label", names_to = "contrast") %>% dplyr::filter(!is.na(DE_label))%>%
+    dplyr::filter(assay == "counts")
+
+
+
+```
+
+
+```{r}
+
+
+varToPlot <- "AveExpr"
+p <- ggboxplot(longLabels, x = "DE_label", y = varToPlot,
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = c("contrast","cell_line"), short.panel.labs = TRUE)
+
+
+
+p1 <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "0") +scale_fill_manual(values=colors_allocation_list) + # + fill=factor(contrast, levels = 
+facet_grid(cols = vars(cell_line), rows = vars(factor(contrast , levels = contrasts_order))) 
+ 
+
+ave_expr_plot <- p1 + labs(title = "Average Expression across cell lines and contrasts") + coord_cartesian(ylim = c(0,16))
+
+ave_expr_plot
+
+```
+
+## Focous only on direct RNA vs PCR cDNA comparisson below {.unnumbered .unlisted}
+
+GC content and sequence legnth calculated for all transcripts annotated in 'bambu' extended_annotation.gtf file, using bedtools nuc (sequence length is the sum of all bases and GC content is the ratio of sums of G’s and C’s to the total length).
+Values presented for all transcripts tested, stratified by DE label.
+P-values are obtained using a two-tailed t.test with respect to the non DE group )ns: p > 0.05, \*: p <= 0.05, \*\*: p <= 0.01, \*\*\*: p <= 0.001, and \*\*\*\*: p <= 0.0001). 
+
+
+```{r}
+
+nuc_data_filename <- "allTXexon_sums_ont_no_ev_counts.csv"
+
+TX_info <- read.csv(paste(output_path,"extra_info/",nuc_data_filename,sep=""))
+
+TX_info <- TX_info %>% mutate(log2seqLen = log2(allNUC))
+
+
+all_de_labels <- new_de_labels 
+
+DE_labels <- all_de_labels%>%dplyr::filter(assay!="gene_counts") #DE_joined_labels_fromcsv  #data.frame(feature_id = rownames(new_dt),new_dt[,c(4:dim(new_dt)[2])])
+
+
+#DE_labels$feature_id <- DE_labels$X
+
+ 
+DElabels_andTXinfo <- DE_labels %>%
+    left_join(TX_info %>%
+        dplyr::select(c( "transcript_id", "exon_sumGCcontent","allNUC","log2seqLen")),#, "exon_sumSeqLen")),
+        by = join_by("feature_id" == "transcript_id"))
+
+
+
+longLabels <- DElabels_andTXinfo %>% 
+    pivot_longer(contains("vs"), values_to = "DE_label", names_to = "contrast") %>%dplyr::filter(!is.na(DE_label))%>%
+    filter(contrast == "dRNAvsPCRcDNA",cell_line !="all")
+
+
+```
+
+
+## GC content 
+```{r}
+varToPlot <- "exon_sumGCcontent"
+p <- ggboxplot(longLabels, x = "DE_label", y = varToPlot,
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = c("cell_line","assay"), short.panel.labs = TRUE)
+
+
+
+p1 <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "0",label.y = 0.7) +scale_fill_manual(values=colors_allocation_list) + # + fill=factor(contrast, levels = contrasts_order
+facet_grid(cols = vars(cell_line), rows = vars(assay)) + 
+   scale_x_discrete(
+    breaks = c(-1, 0, 1),              # Positions of the ticks
+    labels = c("PCR\nup", "Non\nSig", "PCR\ndown")  # Custom labels
+  ) 
+
+p1
+
+```
+### Figure 2d GC content (transcript counts)
+```{r}
+
+# 
+# 
+# longLabels <- DElabels_andTXinfo %>% select(-X)%>%
+#     pivot_longer(contains("vs"), values_to = "DE_label") %>%dplyr::filter(!is.na(DE_label))%>%
+#     separate_wider_delim(name, delim = "_", names = c("cell_line", "contrast",NA))%>%dplyr::filter(contrast == "dRNAvsPCRcDNA",cell_line !="all")
+
+longLabels_counts <- longLabels %>%dplyr::filter (assay =="counts")
+
+varToPlot <- "exon_sumGCcontent"
+p <- ggboxplot(longLabels_counts, x = "DE_label", y = varToPlot,
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = c("cell_line"), short.panel.labs = TRUE)
+
+
+
+GCcontent_allTX <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "0",label.y = 0.2) +
+  facet_grid(cols = vars(cell_line)) + labs( y = "GC content",x="")+#, title="GC content, all transcript counts") + #scale_fill_manual(values=colors_allocation_list) + 
+  scale_x_discrete(
+    breaks = c(-1, 0, 1),              # Positions of the ticks
+    labels = c("PCR\nup", "Non\nSig", "PCR\ndown")  # Custom labels
+  ) + theme(axis.text.x = element_text(size=10)) + coord_cartesian(ylim = c(0.1,0.8)) +
+  labs(title = "GC content, all transcripts", y="Fraction")
+ 
+GCcontent_allTX
+```
+## Sequence length
+```{r}
+
+
+p <- ggboxplot(longLabels, x = "DE_label", y = "log2seqLen",
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = c("cell_line", "assay"), short.panel.labs = TRUE)
+
+
+
+seq_length <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "0",label.y = 15) +scale_fill_manual(values=colors_allocation_list) +  labs( y = "Sequence length (log2)",x="", title="Sequence length, all transcript counts")+
+facet_grid(cols = vars(cell_line), rows = vars(assay))#factor(contrast , levels = contrasts_order)), cols = vars(cell_line))
+ 
+
+seq_length
+
+```
+
+### Figure 2e Sequence length (full length transcripts) 
+```{r}
+
+
+longLabels_fullLength <- longLabels %>%dplyr::filter (assay =="fullLengthCounts")
+varToPlot <- "log2seqLen"
+p <- ggboxplot(longLabels_fullLength, x = "DE_label", y = varToPlot,
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = c("cell_line"), short.panel.labs = TRUE)
+
+
+
+seqLen_fl <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "0",label.y = 5.) +
+  facet_grid(cols = vars(cell_line)) + labs( y = "Sequence length \n(log2, full length reads only)",x="") + #, title="Sequence length, full length read counts only") +#scale_fill_manual(values=colors_allocation_list) + 
+  scale_x_discrete(
+    breaks = c(-1, 0, 1),              # Positions of the ticks
+    labels = c("PCR\nup", "Non\nSig", "PCR\ndown")  # Custom labels
+   
+  ) + theme(axis.text.x = element_text(size=10)) + 
+  labs(title = "Sequence length ,full length transcripts only", y = "bp (log2)")
+ 
+seqLen_fl <- seqLen_fl + coord_cartesian(ylim = c(5,15))
+seqLen_fl
+```
+## Figure 2f RNA modification 
+m6A  detection results are available from the SGNex database for a subset of the direct RNA samples in the core dataset (A549, K562, Hct116, HepG2, MCF7). For each of the cell lines, m6A site modification probability was calculated using m6Anet infer based on the 2-3 replicates that were provided for each of the cell lines. For each isoform, we first counted the number of sites that were methylated with probability >0.9 (the threshold for true modification suggested by the authors), and then calculated the fraction of these sites out of all possible methylation sites on that isoform, to provide a single value that represents methylation fraction for each isoform. 
+
+```{r}
+prev_run_data_path <- "/Users/rotem/Code/GitHub/long-read-compare-protocols/"
+
+#data_path: "/Users/rotem/Code/GitHub/long-read-compare-protocols/data/70latestRCfiles/"
+prev_project_path = "/Users/rotem/Code/GitHub/long-read-compare-protocols/"
+
+prev_output_prefix = "data/analysis_output/"
+
+
+
+all_RNAmeth_labels <- read.csv(paste(prev_project_path,prev_output_prefix,"all_available_siteProb_means.csv",sep=""))
+
+
+joint_labels <-longLabels%>%dplyr::filter (!is.na(DE_label)) %>% inner_join(all_RNAmeth_labels%>%mutate(feature_id =transcript_id) , by=c("feature_id","cell_line"))
+
+
+
+
+
+varToPlot <- "mean_mod_ratio"
+p <- ggboxplot(joint_labels, x = "DE_label", y = varToPlot,
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = c("cell_line","assay"), short.panel.labs = TRUE)
+
+
+
+mod_ratio <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "0",label.y = 0.0) +scale_fill_manual(values=colors_allocation_list) + # + fill=factor(contrast, levels = contrasts_order
+facet_grid(cols = vars(cell_line), rows = vars(assay)) +#factor(contrast , levels = contrasts_order)), cols = vars(cell_line))
+ labs(y= "Fraction of modified sites",x="")+coord_cartesian(ylim =c(-0.0,0.35)) +
+  scale_x_discrete(
+    breaks = c(-1, 0, 1),              # Positions of the ticks
+    labels = c("PCR\nup", "Non\nSig", "PCR\ndown") ) +# Custom labels
+ theme(axis.text.x = element_text(size=10))# +
+  #labs(title =expression("fraction" ~ m^6A ~ "mod")) 
+mod_ratio <- mod_ratio +labs(title = expression("Fraction of "*m^6*"A modified sites "), y = "Fraction")
+mod_ratio
+```
+
+
+
+```{r}
+
+joint_labels_counts <- joint_labels %>%dplyr::filter(assay =="counts")
+
+varToPlot <- "mean_mod_ratio"
+p <- ggboxplot(joint_labels_counts,x = "DE_label", y = varToPlot,
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = c("cell_line"), short.panel.labs = TRUE)
+
+mod_ratio <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "0",label.y = 0.0) +scale_fill_manual(values=colors_allocation_list) + # + fill=factor(contrast, levels = contrasts_order
+facet_grid(cols = vars(cell_line)) +#factor(contrast , levels = contrasts_order)), cols = vars(cell_line))
+ labs(y= "Fraction of modified sites",x="")+coord_cartesian(ylim =c(0.0,0.35)) +
+  scale_x_discrete(
+    breaks = c(-1, 0, 1),              # Positions of the ticks
+    labels = c("PCR\nup", "Non\nSig", "PCR\ndown") ) +# Custom labels
+ theme(axis.text.x = element_text(size=10))# +
+  #labs(title =expression("fraction" ~ m^6A ~ "mod")) 
+mod_ratio <- mod_ratio +labs(title = expression("Fraction of "*m^6*"A modified sites "), y = "Fraction")
+mod_ratio
+
+
+```
+
+## Investigate correlations (sup 2a)
+
+```{r}
+
+# Create the pairwise plot with correlations on each plot
+p <- ggpairs(
+  joint_labels %>%select(c(AveExpr, exon_sumGCcontent,log2seqLen,num_of_00mod,mean_mod_ratio)), ,
+  columns = 1:5,
+  columnLabels = c("AveExpr","GC content", "Sequence length \n [log2]", "#of \n mod. sites","fraction of \nmodified sites"),
+  lower = list(continuous = scatter_with_cor),  # Custom scatter with correlation
+  diag = list(continuous = "barDiag"), 
+  upper = list(continuous = "blank"),  # Leave upper triangle blank
+  title = "Scatter Plots with Correlation Values"
+) +
+  theme_bw() +
+ # theme(
+#    strip.background = element_rect(fill = "lightgray"),
+ #   strip.text = element_text(face = "bold"),
+#    axis.text = element_text(size = 8)
+#  ) +
+theme(
+    strip.background = element_blank(),         # Remove strip background
+    strip.text = element_text(size = 8),               # Remove strip text
+    axis.text = element_text(size = 8),
+    axis.title = element_text(size = 9),
+   # plot.title = element_text(size = 8, face = "bold", hjust = 0.5)
+  ) + theme(legend.position = "right") 
+# Display the plot
+print(p)
+
+ggsave("figures/sup_figure2/correlation_plots_2.pdf", p, width = 10, height = 8,dpi=300)
+```
+Adjust plot limits without impact on estimated fit or calculated spearman correlation values.
+```{r}
+p <- ggpairs(
+  joint_labels %>%select(c(AveExpr,exon_sumGCcontent,log2seqLen,num_of_00mod,mean_mod_ratio))%>% 
+    mutate ( lim_num_of_00mod = pmax(0, pmin(175,num_of_00mod)), lim_mean_mod_ratio = pmax(0, pmin(0.65,mean_mod_ratio)))%>%
+    select(-c(num_of_00mod,mean_mod_ratio)),
+  columns = 1:5,
+  columnLabels = c("AveExpr","GC content", "Sequence length \n [log2]", "#of \n mod. sites","fraction of \nmodified sites"),
+  lower = list(continuous = scatter_with_cor),  # Custom scatter with correlation
+  diag = list(continuous = "barDiag"), 
+  upper = list(continuous = "blank"),  # Leave upper triangle blank
+  title = "Scatter Plots with Correlation Values"
+) +
+  theme_bw() +
+ # theme(
+#    strip.background = element_rect(fill = "lightgray"),
+ #   strip.text = element_text(face = "bold"),
+#    axis.text = element_text(size = 8)
+#  ) +
+theme(
+    strip.background = element_blank(),         # Remove strip background
+    strip.text = element_text(size = 8),               # Remove strip text
+    axis.text = element_text(size = 8),
+    axis.title = element_text(size = 9),
+    #plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+  ) + theme(legend.position = "right")
+# Display the plot
+print(p)
+
+ggsave("figures/sup_figure2/correlation_plots_adjusted_blues.pdf", p, width = 10, height = 8,dpi=300)
+```
+```{r}
+png("figures/sup_figure2/correlation_plots_blues.png", width = 15, height = 15, units = "cm", bg = "white",
+    res = 300)
+p+guides(fill = guide_legend(override.aes = list(size = 3)))  # Make legend visible
+
+dev.off()
+
+correlation_plot <- ggmatrix_gtable(p)
+```
+
+
+```{r}
+upper_panel <- ggarrange( 
+  ave_expr_plot ,
+  correlation_plot ,
+  labels=c("a","b"),
+  ncol = 2,nrow = 1
+  )
+ lower_panel%>%ggexport(width =20,height = 10)
+```
+<!--
+# Figure 2 
+```{r}
+ 
+de_results <- ggarrange(de_numbers,GCcontent_allTX + theme_pubr(), seqLen_fl+ theme_pubr(), mod_ratio+ theme_pubr(),
+          labels = c("", "d", "e","f"),
+          ncol = 1, nrow = 4,heights = c(1.1,1,1,0.8) )
+de_results %>%
+  ggexport(filename = "figures/figure2/de_results.pdf", width = 10, height = 10) 
+  
+
+  png("figures/figure2/de_results_test.png",width = 30, height = 30, units = "cm", 
+    bg = "white",res = 300)
+ de_results
+  dev.off()
+
+```
+--->
+
+# Figure 2
+```{r}
+ 
+de_results <- ggarrange(de_numbers,GCcontent_allTX , seqLen_fl, mod_ratio,
+          labels = c("", "d", "e","f"),
+          ncol = 1, nrow = 4,heights = c(1.1,1,1,0.8) )
+de_results %>%
+  ggexport(filename = "figures/figure2/de_results.pdf", width = 10, height = 10) 
+  
+
+  png("figures/figure2/de_results.png",width = 30, height = 30, units = "cm", 
+    bg = "white",res = 300)
+ de_results
+  invisible(dev.off())
+
+```
+![Figure 2:   Differential Expression between sequencing protocols:
+a) Number of significant DE genes found for each cell line in each of the contrasts tested ( adjP=0.05, lfc=1).  b) Number of significant DE transcripts found for each cell line in each of the contrasts tested ( adjP=0.05, lfc=0.5). c) Similar to b) but calculated using full length transcript counts only. d) GC content of all transcripts split on whether they are significantly up regulated or down regulated in the PCR cDNA sample compared with direct RNA (DE testing performed on all transcript counts). e). Similar to c) but plotting the sequence length (DE testing performed on full-length transcript counts). f) Similar to c) but plotting the fraction of methylated sites in the transcript (DE testing performed on all transcript counts (only transcripts for which  methylation data was available are plotted). P-values are obtained using a two-tailed t.test with respect to the non DE group (ns: p > 0.05, *: p <= 0.05, **: p <= 0.01, ***: p <= 0.001, and ****: p <= 0.0001).
+](figures/figure2/de_results.png)
+
+# Supp. Figure 2
+```{r}
+final_plot <- ggarrange(
+  upper_panel, 
+  lower_panel,
+  ncol = 1, nrow = 2,labels = c("",""))
+final_plot%>%ggexport(filename = "figures/sup_figure2/sup_fig2.pdf",width = 15, height = 15)
+
+
+ggsave("figures/sup_figure2/sup_fig2.png", final_plot, 
+       width = 30, height = 30, units = "cm", 
+       bg = "white", dpi = 300)
+
+```
+![Supplementary Figure 2:a) Cross correlation plot of observed transcript expression, GC content, transcript length and m6A methylation. Observed average transcript expression shows negative correlation with sequence length (r=-.24) which is expected in long read data. The number of m6A modified sites increases with transcript length (r=0.5), and decreases with GC content (r=-0.26). The fraction of m6A modified sites (which is the measure of m6A modification plotted in figure 2f) is not correlated with sequence length (r=0.04), and has positive correlation with GC content (r = 0.38).  Average transcript expression shows negative correlation with the fraction of modified sites  (r = - 0.17), but is not correlated with the number of modified sites (r=0.01). Correlation is estimated using the Pearson method. b) Mean transcript expression, stratified by DE labels across cell lines and contrasts. significant DE features are biased towards higher expression levels as expected. P-values were obtained using a two-tailed t.test, with respect to the non DE group. ns: p > 0.05, *: p <= 0.05, **: p <= 0.01, ***: p <= 0.001, and ****: p <= 0.0001. c) Concordance of DE features between cell lines. Top panel: Gene counts, middle panel: Transcript counts, bottom panel: Full length transcript counts). For each of the contrasts, the coloured bars indicate for each feature, in how many cell lines it was found to be differentially expressed between the protocols compared in that contrast. One indicates the feature was found differentially expressed between the protocols in that contrast only in that cell line (low concordance), while 5-7 indicates the feature was found differentially expressed in all or almost all the cell lines (high concordance). For example, in the direct RNA vs PCR cDNA comparison, there are about 400 genes and 1000 transcripts that are consistently differentially expressed in 5-7 of the cell lines, which we consider high concordance. Further, there are more than 1000 genes and 4000 transcripts that are differentially expressed between the direct RNA and PCR cDNA protocols in 2-4 of the cell lines. This strong overlap of DE genes and transcripts between the cell lines, despite the large variation in expression between them gives a strong indication that the factors driving these differences are consistent across the cell lines. Indeed GC content and sequence length are intrinsic characteristics of each gene and transcript and do not change between the cell lines. 
+d) Similar to c), but for each of the cell lines, the colour indicates how many contrasts each feature was DE in. The large number of DE features that were found to overlap between the comparisons with the PCR cDNA protocol indicate the extent of impact PCR amplification has to bias expression levels. 
+](figures/sup_figure2/sup_fig2.png)
+

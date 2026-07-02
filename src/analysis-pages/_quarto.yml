@@ -1,0 +1,43 @@
+project:
+  title: "Long read sequencing reveals changes in measured isoform structure and abundance due to RNA processing"
+  type: website
+  output-dir: ../../docs
+  render:
+    - "*.qmd"
+    - "*.ipynb"
+    - "!notReadyipynbs/"
+
+format:
+  html:
+    embed-resources: true
+    page-layout: full
+    theme: cosmo
+    toc: true
+    #toc-location: left
+    toc-depth: 3           # Controls the heading levels included (default is 3)
+    toc-expand: 1
+    #toc-title: "Contents"  # Changes the title of the TOC
+    code-fold: true
+    code-tools: true
+    number-sections: true
+    number-depth: 3
+    grid:
+      sidebar-width: 200px   # Narrower sidebar
+      body-width: 1200px     # Wider main content
+      margin-width: 150px    # Narrower margins
+
+website:
+  sidebar:
+    contents: auto
+    sort:
+    - "name"  
+  reader-mode: true
+  page-navigation: true
+  back-to-top-navigation: true
+  search: true
+  
+execute:
+  warning: false
+  message: false
+  freeze: false
+  cache: false

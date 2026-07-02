@@ -1,0 +1,63 @@
+% Source - https://tex.stackexchange.com/a/330103
+% Posted by user2574, modified by community. See post 'Timeline' for change history
+% Retrieved 2026-02-18, License - CC BY-SA 4.0
+
+\documentclass[varwidth,margin=1cm]{standalone}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{graphicx}
+
+\usepackage[T1]{fontenc}
+\usepackage[scaled]{helvet} % Loads Helvetica
+\scriptsize 
+
+
+\renewcommand{\familydefault}{\sfdefault} % Sets Helvetica as default
+
+
+
+
+
+\begin{document}
+\begin{figure}
+%\hspace{-1.2em}
+ %\makebox[\textwidth][l]{\scriptsize{Numbers of DTU features}}
+ 
+ 
+  \begin{subfigure}[t]{0.2\textwidth}
+        \centering
+        \llap{\raisebox{0mm}{\textbf{\tiny a }}}%
+               \vspace{-2mm}
+      \tiny Transcript proportions
+    %    \makebox[\linewidth][l]{\tiny \textbf{a} Proportions}
+        \includegraphics[width=\linewidth,height=2.5cm, keepaspectratio=false]{ENSG00000173812proportions_plot.pdf}          
+     %  \par\vspace{-1em}%
+       
+     %  \vspace{-5mm}  % Negative space to pull images closer
+    
+        {\llap{\raisebox{\dimexpr\height-2mm}{\textbf{\tiny b}}}
+         \vspace{-1.6mm}
+    \tiny Transcript counts (per million)
+          \includegraphics[width=\linewidth,height=2.5cm, keepaspectratio=false]{ENSG00000173812cpm_plot}
+}     
+          \end{subfigure}    
+    \begin{subfigure}[t][6.05cm][t]{0.5\textwidth}
+        \centering
+           \llap{\raisebox{0mm}{\textbf{\tiny c }}}%
+               \vspace{-2mm}
+         \tiny Misallocation of reads to transcripts leads to false positive DTU between protocols 
+        \includegraphics[width=\textwidth,height=5.3cm, keepaspectratio=false]{ENSG00000173812coverage_plot_logScale_A549demo.pdf}    
+    \end{subfigure}
+%     
+%    \begin{subfigure}{0.33\textwidth}
+%        \centering
+%        \llap{\raisebox{\dimexpr\height-0.8em}{\textbf{\scriptsize h}}}%
+%        \includegraphics[width=\linewidth,height=3.5cm, keepaspectratio=false]{sqanti3_label_numbers_in_switching_pairs.png}
+%    \end{subfigure}
+%    
+            
+    
+
+
+\end{figure}
+\end{document}

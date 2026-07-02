@@ -1,0 +1,789 @@
+---
+title: "4 Differential Transcript Usage between protocols <br> (Figure 3a &  Supp. Figure 3)"
+author: Rotem Aharon
+date: today
+   
+params:
+  data_path: "../../data/ont_only_counts/"
+  project_path: "/Users/rotem/Code/GitHub/manuscript-and-analysis-code/"
+  output_path: "../../data/analysis_output/ont_only_counts/"
+  bambu_rds: "selected_samples.rds"
+  figures_prefix: "figures/"
+  calcProp: "FALSE"
+  method: "Bambu"
+---
+Testing for significant DTU between the PCR cDNA and direct RNA samples was performed separately for each cell line using DRIMSeq v.1.34.0 (41), based on all transcript counts. False discovery rate (FDR) was controlled using a Two-stage test implemented in stageR v.1.28.0 (42), as recommended by the authors in (43).
+
+
+After testing for DTU, we use the significance labels together with the estimated proportions for each group to identify the following cases, and define reference and test transcripts that will be compared to each other in later stages of the analysis
+
+- **Isoform switching genes**
+In order to identify isoform switching genes, for each significant DTU gene, all isoforms were ordered by their proportions in each condition. If the most dominant transcripts are different between the different protocols, this is defined to be an isoform switching gene. The most dominant transcript in direct RNA is set as ‘reference’, and the one most dominant in PCR cDNA is set as ‘test’. 
+- **Background genes**
+ For non-significant DTU genes, the isoforms were ordered by their proportion in the direct RNA. The most dominant isoform was  set as ‘reference’ and the second most dominant was set as ‘test’.
+Sampled sets of background genes 
+Since the mean expression of the DTU genes was generally higher than that of the background genes, for each cell line we sampled 5 sets of 100 background genes at random with whether sampling to have an expression distribution consistent with that of the isoform switching genes from the same cell line.
+- **Novel isoforms in PCRcDNA**
+A novel transcript in the PCRcDNA group is defined to be a DTU transcript for which the proportion in the PCRcDNA groups is at least 0.01, and  effectively zero (<0.001) in the direct RNA group. The most dominant transcript in direct RNA is set as ‘reference’, and the novel transcript present only in the PCR cDNA samples is set as ‘test’. 
+
+
+### Setup, libraries and parameters {.unnumbered .unlisted}
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(tidy = 'formatR') 
+```
+
+```{r libraries, message = FALSE, warning = FALSE}
+#| code-fold: true
+# analysis pkgs
+
+library(limma)
+library(edgeR)
+library(stageR)
+library(DRIMSeq)
+# plotting tools
+library(gridExtra) 
+library(RColorBrewer)
+library(cowplot)
+library(ggpubr)
+library(patchwork)
+library(ggplot2,ragg)
+library(ggalluvial)
+
+# other
+library(tidyverse)
+library(dplyr)
+library(SummarizedExperiment)
+library(purrr)
+source("/Users/rotem/Code/manuscript-and-analysis-code/src/rscripts/isoform_pairs.R")
+source("~/Code/manuscript-and-analysis-code/src/rscripts/run_drimseq_and_stageR.R")
+```
+
+### Load SE object {.unnumbered .unlisted}
+This containes all ONT samples that remained for downstream analysis after filtering in earlier stages.  
+```{r}
+data_path <- params$data_path
+project_path <- params$project_path
+
+output_prefix <- params$output_prefix  #'fullLength_tx_counts'
+
+output_path <- params$output_path# paste(project_path, output_prefix, sep = "")
+
+bambu_se_rds_file <- params$bambu_rds
+bambu_rds_path <- paste(output_path, bambu_se_rds_file, sep = "")
+
+
+selected_samples <- readRDS(bambu_rds_path)
+selected_samples
+
+
+```
+
+
+### DRIMSeq and stageR info for reference {.unnumbered .unlisted}
+DRIMSeq object for a given design holds all isoform proportions for each gene, along with gene and TX level p-values calculated in previous steps.
+Here, for a relevant contrast the dmTest is performed to identify genes and isoforms with significant DTU, followed by the stage-wise test^[quote and relevant code snippet from https://bioconductor.org/packages/release/bioc/vignettes/DRIMSeq/inst/doc/DRIMSeq.pdf Dated April 30, 2024
+Package: DRIMSeq 1.32.0
+**Two-stage test**
+DRIMSeq returns gene and transcript level p-values which can be used as an input to the
+stage-wise analysis [2] implemented in the stageR package, currently available on github
+https://github.com/statOmics/stageR. As pointed by the authors of stageR, interpreting
+both gene-level and transcript-level adjusted p-values does not provide appropriate FDR control and should be avoided. However, applying a stage-wise testing provides a useful biological
+interpretation of these results and improved statistical performance.
+In short, the procedure consists of a screening stage and a confirmation stage. In the screening
+stage, gene-level BH-adjusted p-values are screened to detect genes for which the hypothesis
+of interest is significantly rejected. Only those genes are further considered in the confirmation
+stage, where for each gene separately, transcript-level p-values are adjusted to control the
+FWER and BH-adjusted significance level of the screening stage.
+It is important to note that transcript-level stage-wise adjusted p-values for genes that do
+not pass the screening stage are set to NA. Also the stage-wise adjusted p-values can not
+be compared to significance level other than chosen in the stage-wise analysis. If that is of
+interest, one has to rerun this analysis with the new significance level.
+The following code chunk is not evaluated by this vignette and to run it, user has to make
+sure that the stageR package is installed. It shows how one can use the DRIMSeq output in
+the stage-wise analysis.] to correct for FDR=0.05.  
+
+# Test for  DTU between direct RNA and PCR cDNA sampels for each cell-line 
+Define test function
+```{r}
+
+filter_dcDNA <- selected_samples[,colData(selected_samples)$protocol != "directcDNA"]
+assay_to_test <- "counts"
+contrast_name <- "dRNAvsPCRcDNA"
+
+test_single_cell_line <- function(cell_line){
+
+      cell_line_prefix <- paste("drimSeqResObjects/singleContrast",cell_line,sep="_")
+      save_to_path <- paste(output_path,cell_line_prefix,sep="")
+      saved_rds_filename <- paste(assay_to_test,"drimSeqFitObject.rds",sep="_") 
+      rds_path <- paste( save_to_path, saved_rds_filename,sep = "")
+      
+      if (params$calcProp) {
+        cell_line_selected_samples <- filter_dcDNA[,colData(filter_dcDNA)$cellType == cell_line]
+      
+        d_cell_line <- drimseq_initialise_from_se(cell_line_selected_samples, group_name = "protocol",assay_to_test =assay_to_test,save_to_path = save_to_path)
+      } else {
+        d_cell_line <- readRDS(rds_path)
+      }
+    
+      design <- design(d_cell_line)
+      
+      contrasts = makeContrasts(
+                                  dRNAvsPCRcDNA = group_directRNA - group_PCRcDNA,
+                                    levels=colnames(design))
+      
+      labelled_isoforms <- select_all_pairs_return_pairs_list(d_cell_line, 
+                                                              contrast=contrasts,
+                                                              contrast_name=contrast_name,
+                              bambu_output_se = filter_dcDNA,
+                              pairs_output_path = paste(params$output_path,"isoform_pairs/",cell_line,assay_to_test,sep=""),
+                              gff_output_path =paste(params$output_path,"gff_files/",cell_line,assay_to_test,sep=""))
+
+   
+    return(labelled_isoforms)
+   }
+   
+```
+
+Run DTU tests for each cell line 
+```{r}
+
+cell_lines_names <- c( "A549", "MCF7","H9", "HepG2", "Hct116", "HEYA8", "K562")
+
+
+results <- setNames(lapply(cell_lines_names, test_single_cell_line), cell_lines_names)
+
+all_cell_lines_switching_pairs <- map_dfr(results, ~.x["switching_pairs"], .id = "source")
+
+all_cell_lines_dtu_pairs_nums <- map_dfr(results, ~{
+  tibble( switching_pairs = nrow(.x[["switching_pairs"]]), 
+  novel_pairs =nrow(.x[["novel_pairs"]]))}, .id = "source")  %>%
+  pivot_longer(-source)
+
+write.csv(all_cell_lines_dtu_pairs_nums,"all_cell_lines_dtu_pairs_nums_tempForPlots.csv")
+```
+
+## DTU results 
+
+
+
+### DTU genes (w concordance between cell-lines)
+
+```{r}
+
+
+all_cell_lines_summarised_results <- map_dfr(results, ~.x$summaraise_dmsq_stageR_results, .id = "source")
+
+
+unique_gene_DTU_labels <- all_cell_lines_summarised_results%>%dplyr::select(source,geneID,gene,gene_05label) %>% distinct()
+
+
+
+
+concordance_between_celllines <- unique_gene_DTU_labels%>%group_by(geneID,gene_05label) %>%mutate(dtu_cellline_num = sum(abs(gene_05label)))%>%ungroup()
+
+
+concordance_between_celllines$collapsed_dtu_celline_num <- fct_collapse(
+factor(concordance_between_celllines$dtu_cellline_num),"0" =c(0),"1" = c(1),"2-4" = c(2,3,4),"5-7"=c(5,6,7))
+
+
+dtu_gene_concordance_plot <- concordance_between_celllines %>%filter(gene_05label !=0) %>%group_by(source,collapsed_dtu_celline_num)%>%summarise(sum = n())%>%
+  ggplot(aes(x =source,y=sum,fill = factor(collapsed_dtu_celline_num ))) + geom_bar(stat ="identity",position = "stack") +  
+  geom_text(aes(label = sum), position = position_stack(vjust = 0.5), size = 3) +
+  labs(y="Genes",x="",fill="Concordance between cell lines") + 
+  #facet_grid(cols = vars(factor(contrast, levels = contrasts_order)),scales ="free") + 
+  theme(axis.text.x = element_text(size = 8),legend.position = "bottom") + scale_fill_brewer(palette = "Oranges") # 
+
+
+
+ragg::agg_png("figures/sup_figure3/dtu_gene_concordance.png", width = 6, height = 5, units = "cm", res = 600, scaling = .5)
+plot(dtu_gene_concordance_plot )
+invisible(dev.off())
+
+
+add_TestedTotal <- left_join( concordance_between_celllines %>%filter(gene_05label !=0) %>%group_by(source,collapsed_dtu_celline_num)%>%summarise(sum = n())%>%ungroup(),
+  concordance_between_celllines%>%group_by(source)%>%summarise(total_tested = n()) %>%ungroup(), by = join_by(source)) %>%
+  ggplot(aes(x =source,y=sum,fill = factor(collapsed_dtu_celline_num ))) + geom_bar(stat ="identity",position = "stack") +  
+  geom_text(aes(label = sum), position = position_stack(vjust = 0.5), size = 2) +
+  labs(y="Genes",x="",fill="Number of cell-lines") + 
+  #facet_grid(cols = vars(factor(contrast, levels = contrasts_order)),scales ="free") + 
+  theme(axis.text.x = element_text(size = 6,angle = 30),legend.position = "bottom",
+        axis.title.y.right = element_text(color = "darkblue") ) +
+  scale_fill_brewer(palette = "Oranges") + 
+  #coord_cartesian(ylim = c(0,1500)) +
+  geom_point(aes(y=total_tested/3),shape = 4,color="darkblue") +
+  scale_y_continuous(
+    name = "Genes",
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*3, name="Total number tested")
+  )  
+   
+
+
+
+ragg::agg_png("figures/sup_figure3/dtu_gene_concordance_sec_y.png", width = 5, height = 5, units = "cm", res = 600, scaling = .5)
+plot(add_TestedTotal)
+invisible(dev.off())
+   
+add_TestedTotal  
+  
+```
+
+
+### Transcript concordace 
+
+```{r}
+
+tx_DTU_labels <- all_cell_lines_summarised_results%>%dplyr::select(source,txID,TX_05label)
+
+
+
+
+tx_concordance_between_celllines <- tx_DTU_labels%>%group_by(txID,TX_05label) %>%mutate(dtu_cellline_num = sum(abs(TX_05label)))%>%ungroup()
+
+
+tx_concordance_between_celllines$collapsed_dtu_celline_num <- fct_collapse(
+factor(tx_concordance_between_celllines$dtu_cellline_num),"0" =c(0),"1" = c(1),"2-4" = c(2,3,4),"5-7"=c(5,6,7))
+
+
+dtu_tx_concordance_plot <- tx_concordance_between_celllines %>%filter(TX_05label !=0) %>%group_by(source,collapsed_dtu_celline_num)%>%summarise(sum = n())%>%
+  ggplot(aes(x =source,y=sum,fill = factor(collapsed_dtu_celline_num ))) + geom_bar(stat ="identity",position = "stack") +  
+  geom_text(aes(label = sum), position = position_stack(vjust = 0.5), size = 3) +
+  labs(y="Transcripts",x="",fill="Concordance between cell lines") + 
+  #facet_grid(cols = vars(factor(contrast, levels = contrasts_order)),scales ="free") + 
+  theme(axis.text.x = element_text(size = 8),legend.position = "bottom") + scale_fill_brewer(palette = "Oranges") # 
+
+
+
+ragg::agg_png("figures/sup_figure3/dtu_tx_concordance.png", width = 6, height = 5, units = "cm", res = 600, scaling = .5)
+plot(dtu_tx_concordance_plot )
+invisible(dev.off())
+   
+
+
+
+tx_add_TestedTotal <- left_join( tx_concordance_between_celllines %>%filter(TX_05label !=0) %>%group_by(source,collapsed_dtu_celline_num)%>%summarise(sum = n())%>%ungroup(),
+  tx_concordance_between_celllines%>%group_by(source)%>%summarise(total_tested = n()) %>%ungroup(), by = join_by(source)) %>%
+  ggplot(aes(x =source,y=sum,fill = factor(collapsed_dtu_celline_num ))) + geom_bar(stat ="identity",position = "stack") +  
+  geom_text(aes(label = sum), position = position_stack(vjust = 0.5), size = 2) +
+  labs(y="Transcripts",x="",fill="Number of cell-lines") + 
+  #facet_grid(cols = vars(factor(contrast, levels = contrasts_order)),scales ="free") + 
+  theme(axis.text.x = element_text(size = 6,angle = 30),legend.position = "none",
+        axis.title.y.right = element_text(color = "darkblue")) +
+  scale_fill_brewer(palette = "Oranges") + 
+  #coord_cartesian(ylim = c(0,1500)) +
+  geom_point(aes(y=total_tested/5),shape = 4,color="darkblue") +
+  scale_y_continuous(
+    name = "Transcripts",
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*5, name="Total number tested")
+  )  
+   
+
+
+
+ragg::agg_png("figures/sup_figure3/dtu_tx_concordance_sec_y.png", width = 5, height = 5, units = "cm", res = 600, scaling = .5)
+plot(tx_add_TestedTotal)
+invisible(dev.off())
+   
+tx_add_TestedTotal
+  
+```
+
+## DTU results
+Numbers of DTU genes, number of DTU genes with isoform switching and number of genes with novel isoform 
+```{r}
+all_pairs_numbers<- all_cell_lines_dtu_pairs_nums %>%ggplot(aes(x=source,y=value,fill = name)) + geom_bar(stat = "identity") + labs(title="",x="",y="number of pairs",fill ="")
+ggsave("figures/figure3/all_pairs_numbers.png",all_pairs_numbers,width = 5, height = 5, units = "cm",dpi = 300)
+
+
+
+switching_pairs_numbers <- all_cell_lines_dtu_pairs_nums%>% filter(name == "switching_pairs") %>%ggplot(aes(x=source,y=value)) + geom_bar(stat = "identity") + labs(title = "",x="",y="Genes with dominant switching",fill ="") + geom_text(aes(label = value), position = position_stack(vjust = 0.5),size =3)
+#ggsave("figures/figure3/switching_pairs_numbers.png",switching_pairs_numbers)
+
+#This method keeps ratios better than normal ggsave
+ragg::agg_png("figures/figure3/switching_pairs_numbers.png", width = 6, height = 6, units = "in", res = 600, scaling = 1.)
+plot(switching_pairs_numbers)
+invisible(dev.off())
+
+
+
+
+switching_pairs_numbers <- all_cell_lines_dtu_pairs_nums%>% filter(name == "switching_pairs") %>%ggplot(aes(x=source,y=value)) + geom_bar(stat = "identity") + labs(title = "Number of genes with dominant switching", x="",y="Genes") + geom_text(aes(label = value), position = position_stack(vjust = 0.5),size =3)
+#ggsave("figures/figure3/switching_pairs_numbers.png",switching_pairs_numbers)
+
+#This method keeps ratios better than normal ggsave
+ragg::agg_png("figures/figure3/switching_pairs_numbers_with_title.png", width = 5, height = 5, units = "cm", res = 600, scaling = .5)
+plot(switching_pairs_numbers)
+invisible(dev.off())
+switching_pairs_numbers
+
+```
+
+# Number of novel pairs
+```{r}
+
+
+novel_pairs_numbers <- all_cell_lines_dtu_pairs_nums%>% filter(name == "novel_pairs") %>%ggplot(aes(x=source,y=value)) + geom_bar(stat = "identity") + labs(x="",y="number of pairs",fill ="") + geom_text(aes(label = value), position = position_stack(vjust = 0.5),size =3)
+ggsave("figures/figure4/novel_pairs_numbers.png",novel_pairs_numbers,width = 5, height = 5, units = "cm", dpi = 300)
+
+
+ragg::agg_png("figures/figure4/novel_pairs_numbers.png", width = 5, height = 5, units = "cm", res = 600, scaling = .5)
+plot(novel_pairs_numbers)
+invisible(dev.off())
+
+novel_pairs_numbers
+
+
+```
+
+```{r}
+
+
+set2_colors <- c(
+ "1" = "darkgrey", 
+  "0" = "lightgrey" ) 
+
+ 
+
+# Custom legend labels 
+ legend_labels <- c( 
+   "1" = "Switching dominant isoforms", 
+  "0" = "All DTU genes"
+ ) 
+
+
+  unique_gene_labels <- all_cell_lines_summarised_results%>%mutate(categorical_gene_lables = as.factor(gene_05label)) %>% dplyr::select(c(source, geneID,  categorical_gene_lables )) %>% distinct(source, geneID,categorical_gene_lables,.keep_all = TRUE)  
+
+  unique_gene_labels%>% group_by(source,categorical_gene_lables) %>%summarise(n = n_distinct(geneID)) %>%mutate(prop = n/sum(n)) %>% ungroup() %>%
+      ggplot(aes(x=source,y= prop)) +geom_bar(stat = "identity") +
+      scale_fill_manual(values = set2_colors, labels = legend_labels) +
+      geom_text(aes(label = n), position = position_stack(vjust = 0.5),size =3) 
+  
+
+  DTUgeneNumbers <- unique_gene_labels%>% group_by(source,categorical_gene_lables) %>%summarise(n = n_distinct(geneID)) %>%mutate(prop = n/sum(n)) %>% ungroup() 
+  widerDTUgeneNumbers <- DTUgeneNumbers %>% pivot_wider(id_cols = "source", names_from = "categorical_gene_lables", values_from = "n") %>% rename("sigDTU" = "1", "nonSig" = "0")
+
+  
+  
+  to_plot <- all_cell_lines_dtu_pairs_nums %>% left_join(widerDTUgeneNumbers) %>%rename (number_of_genes_selected = value)%>% mutate(total_tested = sigDTU + nonSig) %>% mutate(selected_fraction = number_of_genes_selected/total_tested,rest_of_DTU_fraction = (sigDTU - number_of_genes_selected) / total_tested, DTU_fraction = sigDTU/total_tested)
+  
+  
+  to_plot_longer <- to_plot %>% pivot_longer(c(selected_fraction, rest_of_DTU_fraction), names_to = "label",values_to = "fraction" )
+  
+  to_plot_longer %>% ggplot(aes(x=source,y = fraction,fill = label)) + geom_bar(stat = "identity") + facet_grid(rows=vars(name),scales = "free") 
+  
+  
+  
+  #+ scale_fill_manual(values = set2_colors, labels = legend_labels) 
+   
+  
+  #TODO: only left to correct colors and labels for legend! ( maybe use something similar to above)
+  
+  
+set3_colors <- c(
+  "selected_fraction" = "darkgrey",
+  "rest_of_DTU_fraction" = "lightgrey"
+)
+
+# Custom legend labels
+legend_labels_1 <- c(
+  "selected_fraction" = "Isoform switching",
+  "rest_of_DTU_fraction" = "All DTU genes"
+)
+
+
+
+dtu_faraction_with_switching <- to_plot_longer %>% filter(name =="switching_pairs") %>% ggplot(aes(x=source,y = fraction,fill = label)) + geom_bar(stat = "identity") + 
+ scale_fill_manual(values = set3_colors, labels = legend_labels_1) + labs(title = "", x="",y="Fraction",fill = "") +guides(fill = guide_legend(nrow = 2))  + 
+       theme_minimal()+ theme(legend.position = "bottom", figure.size=c(5, 5))
+    dtu_faraction_with_switching
+    
+    ragg::agg_png("figures/figure3/dtu_fraction_with_switching.png", width = 5, height = 5, units = "cm", res = 600, scaling = .5)
+dtu_faraction_with_switching
+invisible(dev.off())
+
+
+
+
+
+```
+```{r}
+# Plot only genes with novel isoforms, and correct format
+
+# Custom legend labels
+legend_labels_2 <- c(
+  "selected_fraction" = "Novel isoform",
+  "rest_of_DTU_fraction" = "All DTU genes"
+)
+
+
+library(scales)
+dtu_faraction_with_novel <- to_plot_longer %>% filter(name =="novel_pairs") %>% ggplot(aes(x=source,y =fraction,fill = label)) + geom_bar(stat = "identity") + 
+ scale_fill_manual(values = set3_colors, labels = legend_labels_2) + labs(title = "", x="",y="Fraction",fill = "") +guides(fill = guide_legend(nrow = 2))  + 
+       theme_minimal()+ theme(legend.position = "bottom", figure.size=c(5, 5))
+
+    dtu_faraction_with_switching+ylim(c(0,0.3)) + scale_y_continuous(trans = "log10") 
+   # breaks = trans_breaks("log10", function(x) 10^x),
+  #  labels = trans_format("log10", math_format(10^.x))
+  
+    
+    ragg::agg_png("figures/figure4/dtu_fraction_with_novel.png", width = 5, height = 5, units = "cm", res = 600, scaling = .5)
+dtu_faraction_with_novel
+invisible(dev.off())
+
+
+
+library(ggbreak)
+
+dtu_faraction_with_novel + scale_y_break(c(0.005,0.16))
+
+
+
+dtu_genes_with_novel <- to_plot_longer %>% filter(name =="novel_pairs",label == "selected_fraction") %>% ggplot(aes(x=source,y =number_of_genes_selected,fill = label)) + geom_bar(stat = "identity") + 
+ scale_fill_manual(values = set3_colors, labels = legend_labels_2) + labs(title = "Number of DTU genes with novel isoform", x="",y="",fill = "") +guides(fill = guide_legend(nrow = 2))  + 
+       theme_minimal()+ theme(legend.position = "none", figure.size=c(5, 5))
+
+
+  
+ragg::agg_png("figures/figure4/dtu_genes_with_novel.png", width = 5, height = 5, units = "cm", res = 600, scaling = .5)
+dtu_genes_with_novel + ylim(c(0,11))+labs(title ="")
+invisible(dev.off())
+
+```
+
+
+```{r}
+numbers_of_switching <- to_plot_longer%>% filter (label =="selected_fraction", name =="switching_pairs") %>% summarise(sum(number_of_genes_selected),sum(sigDTU))
+
+numbers_of_novel <-  to_plot_longer%>% filter (label =="selected_fraction", name =="novel_pairs") %>% summarise(sum(number_of_genes_selected),sum(sigDTU))
+
+```
+
+:::{.callout-note}
+The numbers of DTU genes detected was: `r numbers_of_switching$"sum(sigDTU)" `.
+
+Out of these, `r numbers_of_switching$"sum(number_of_genes_selected)"` had different dominant isoform between the protoccols (isoform switching),  
+and,  `r numbers_of_novel$"sum(number_of_genes_selected)"` genes had a novel transcript in the PCR samples with respect to the direct RNA samples from the same cell-line.
+
+:::
+
+
+# Supplementary figure 3
+## Add sequence length and GC content
+
+```{r}
+
+nuc_data_filename <- "allTXexon_sums_ont_no_ev_counts.csv"
+
+TX_info <- read.csv(paste(output_path,"extra_info/",nuc_data_filename,sep=""))
+
+TX_info <- TX_info %>% mutate(log2seqLen = log2(allNUC))
+
+
+relevant_TX_info <- TX_info %>%dplyr::select(c( "transcript_id", "exon_sumGCcontent","allNUC","log2seqLen"))
+
+
+
+
+
+merged_list <- lapply(results, function(source) {
+  lapply(names(source), function(tibble_name) {
+    tibble <- source[[tibble_name]]
+    
+    # Process tibbles that start with specific prefix
+    if (tibble_name=="background_pairs") {
+  
+      
+      tibble %>%left_join(relevant_TX_info,
+        by = join_by("txID.plusGroupTopTx" == "transcript_id"),suffix = c("left","right"))%>%left_join(TX_info %>%dplyr::select(c( "transcript_id", "exon_sumGCcontent","allNUC","log2seqLen")),#, "exon_sumSeqLen")),
+        by = join_by("txID.plusGroup2ndTx" == "transcript_id"),suffix = c("_ref","_test")) %>% mutate(GC_diff = exon_sumGCcontent_ref-exon_sumGCcontent_test, length_diff = allNUC_ref-allNUC_test)%>% mutate(log2_length_diff = log2(length_diff)) %>%
+         dplyr::select(c(geneID,mean_expression.x, GC_diff, length_diff, log2_length_diff))
+    }
+    else if
+        ( tibble_name=="switching_pairs") {
+   
+          
+      tibble %>%left_join(relevant_TX_info,
+        by = join_by("txID.plusGroupHigh" == "transcript_id"),suffix = c("left","right"))%>%left_join(TX_info %>%dplyr::select(c( "transcript_id", "exon_sumGCcontent","allNUC","log2seqLen")),#, "exon_sumSeqLen")),
+        by = join_by("txID.minusGroupHigh" == "transcript_id"),suffix = c("_ref","_test")) %>% mutate(GC_diff = exon_sumGCcontent_ref-exon_sumGCcontent_test, length_diff = allNUC_ref-allNUC_test)%>% mutate(log2_length_diff = log2(length_diff))%>%
+         dplyr::select(c(geneID,mean_expression.x, GC_diff, length_diff, log2_length_diff))
+   
+    
+        }
+  }) %>%
+  setNames(names(source))
+})
+
+
+
+```
+```{r}
+
+
+#  map_dfr(merged_list, ~.x$switching_pairs%>% dplyr::select(c(length_diff,allNUC_ref,log2seqLen_ref)), .id = "source")
+# 
+#  ~.x$summaraise_dmsq_stageR_results, .id = "source"
+# map_dfr(
+# merged_list, ~{
+#   tibble( .x[["switching_pairs"]] %>% dplyr::select(c(  (length_diff,"allNUC_ref","log2seqLen_ref")) )})
+#  
+#   
+#   rbind(cbind(merged_list$A549$switching_pairs,pair = "switching_pairs"),cbind(merged_list$A549$background_pairs,pair = "background_pairs"))
+#   
+  
+  summarise_featureas_diff <- map_dfr( merged_list, ~{rbind(cbind(.x$switching_pairs,pair = "switching_pairs"),
+                              cbind(.x$background_pairs,pair = "background_pairs"))}, .id = "cell_line")
+  
+  
+ #map_dfr(merged_list, ~.x$switching_pairs%>% dplyr::select(c(  ][oi9u7length_diff,allNUC_ref,log2seqLen_ref))), .id = "source")
+
+```
+## Differences in sequence length between ref and test transcripts
+
+```{r}
+
+varToPlot <- "length_diff"
+p <- ggboxplot(summarise_featureas_diff, x = "pair", y = varToPlot,
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = "cell_line", short.panel.labs = TRUE)
+
+
+p
+p <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "background_pairs",label.y = c(-1500,-1500,-1500,-1500,1500,-1500,-1500)) + #stat_compare_means(label = "p.signif",method = "t.test", ref.group = "background")+#,label.y = 1) +#scale_fill_manual(values=colors_allocation_list) + # + fill=factor(contrast, levels = contrasts_order
+facet_grid(cols = vars(cell_line)) + coord_cartesian(ylim = c(-2000, 2500)) + #factor(contrast , levels = contrasts_order)), cols = vars(cell_line))
+ labs(y= "seq length diff",x="")+
+  #
+  scale_x_discrete(
+   # 
+    breaks = c( "background_pairs","switching_pairs"),              # Positions of the ticks
+    labels = c("backgroung", "switching") ) +# Custom labels
+ theme(axis.text.x = element_text(size=10,angle = 30))+geom_hline(yintercept = 0, linetype = "dashed", color = "grey") 
+
+p 
+
+
+seq_len_diffs <- p + labs(x="",y="bp", title="Differences in sequence length")
+
+seq_len_diffs
+```
+## View the sign of length differences 
+
+```{r}
+
+length_diff_sign <- summarise_featureas_diff%>%
+    mutate(sign_length_diff = sign(length_diff))%>%
+  ggplot(aes(x = pair, fill = factor(sign_length_diff))) +
+    geom_bar(position = "fill") + facet_grid(cols = vars(cell_line)) +
+  scale_x_discrete(
+    breaks = c( "background_pairs","switching_pairs"),      
+    labels = c("backgroung", "switching") ) +
+ theme(axis.text.x = element_text(size=10,angle = 30))  +
+  labs(x="",y="fraction",title="sign(Reference sequence length - Test sequence length)",fill="")
+
+
+length_diff_sign  
+```
+
+
+
+## Differences in GC content between ref and test transcripts
+
+
+```{r}
+
+varToPlot <- "GC_diff"
+p <- ggboxplot(summarise_featureas_diff, x = "pair", y = varToPlot,
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = "cell_line", short.panel.labs = TRUE)
+
+
+p
+p1 <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "background_pairs",label.y =c(-.16,-.16,-.16,-.16-.16,-.16,-0.16))+
+facet_grid(cols = vars(cell_line)) + theme(axis.text.x = element_text(angle=20, size = 10)) +
+   geom_hline(yintercept = 0, linetype = "dashed", color = "grey") + 
+   scale_x_discrete(
+    breaks = c( "background_pairs","switching_pairs"),            
+    labels = c("backgroung", "switching") ) 
+
+
+GC_diff <- p1 +  coord_cartesian(ylim = c(-0.15, 0.15)) + labs(x="",title="Difference in GC content",y="Fraction")
+GC_diff
+```
+## Gene level mean expression(log2) stratified by switching/background  label
+```{r}
+
+varToPlot <- "log2(mean_expression.x)"
+p <- ggboxplot(summarise_featureas_diff, x = "pair", y = varToPlot,
+#          color = "contrast",
+          #fill = "contrast", #"DE_label", #palette = "jco",
+          #add = "jitter",
+          facet.by = "cell_line", short.panel.labs = TRUE)
+
+
+p
+p1 <- p + stat_compare_means(label = "p.signif",method = "t.test", ref.group = "background_pairs", label.y =c(3,3,3,3,3,3,3)) +
+facet_grid(cols = vars(cell_line))  + theme(axis.text.x = element_text(angle=20, size = 10)) +
+   scale_x_discrete(
+    breaks = c( "background_pairs","switching_pairs"),            
+    labels = c("backgroung", "switching") ) 
+
+p1
+meanExpr <- p1 + coord_cartesian(ylim = c(2, 14)) +  labs(title="Gene level Mean Expression", x="",y="MeanExpr. (log2)")
+meanExpr
+```
+
+## Arrange Supp Figure 3
+```{r}
+
+top_panel <- ggarrange(add_TestedTotal, tx_add_TestedTotal,labels = "auto",ncol = 2, nrow = 1,legend= "bottom",common.legend=TRUE)
+
+ sup3_bottom <- ggarrange(meanExpr ,GC_diff,seq_len_diffs,length_diff_sign,
+          labels = c("c","d","e","f"),
+          ncol = 1, nrow = 4,heights = c(1.1,1,1,1.2) )
+ 
+ 
+ 
+ sup3_bottom <- ggarrange(meanExpr ,GC_diff,seq_len_diffs,length_diff_sign,
+          labels = "auto",
+          ncol = 1, nrow = 4,heights = c(1.1,1,1,1.2) )
+ 
+ sup3_bottom %>%
+  ggexport(filename = "figures/sup_figure3/sup_fig3_smaller.pdf", width = 10, height = 10) 
+  
+
+ 
+  sup3 <- ggarrange(top_panel + plot_annotation(title = "Concordance of DTU features between cell lines"), sup3_bottom,ncol=1, nrows=2,heights = c(1,4)) 
+ 
+ 
+ 
+
+ 
+sup3 %>%
+  ggexport(filename = "figures/sup_figure3/sup_fig3.pdf", width = 10, height = 15) 
+  
+
+  
+  ragg::agg_png("figures/sup_figure3/sup_fig3.png", width = 10, height = 15, units = "in", res = 600, scaling = 1.)
+plot(sup3)
+invisible(dev.off())
+
+
+ fig3_top_panel <- ggarrange( dtu_gene_concordance_plot, dtu_tx_concordance_plot,labels = c("",""),ncol = 2, nrow = 1,legend= "bottom",common.legend=TRUE)
+ 
+ #%>%annotate_figure(top = "Number of DTU features detected between direct RNA and PCR cDNA samples")
+
+ 
+fig3_top_panel %>%
+  ggexport(filename = "figures/figure3/fig3_top_panel.pdf", width = 15, height = 5) 
+  
+
+
+
+
+```
+
+![Supplementary Figure 3: a) Gene level Mean expression separated by background or dominant switching gene.
+b) Difference in GC content between reference and test transcripts calculated for each gene, separated to background and dominant switching. c) Difference in sequence length between reference and test, in background and dominant  switching genes. Recall in both cases, the transcript most dominant in dRNA is considered ‘reference’. In genes with dominant switching, the transcript dominant in the PCRcDNA is considered ‘test’, and in background genes the second most dominant transcript is considered ‘test’. d) Sign[diffLength] for background and switching transcript pairs. +/-1 (blue/red) indicate that the transcript most dominant in direct RNA is longer/shorter than the transcript dominant in cDNA for switching. transcript pairs (second most dominant in the background transcript pairs). In around 60% of the background transcript pairs the transcript dominant in the direct RNA is longer. While in the switching transcript pairs it is closer to 50% for all cell types. P-values were obtained using a two-tailed t.test, with respect to the background group. ](figures/sup_figure3/sup_fig3.png)
+
+
+# Appendix
+
+## ggalluvial plot between sqanti3 labels and ours
+```{r}
+library(ggalluvial)
+result_path<- "/Users/rotem/Code/manuscript-and-analysis-code/src/analysis-pages/both_labels.csv"
+both_labels <- read.csv(result_path ,sep =",")
+
+data <- both_labels %>% separate_wider_delim(existing_suspects,"-",names =c("event","number"),too_few ="align_start")
+```
+```{r}
+
+
+# Create the alluvial plot
+ggplot(data, aes(axis1 = event, axis2 = structural_category)) +
+  geom_alluvium(aes(fill = event), alpha = 0.7) +
+  geom_stratum(alpha = 0.8) +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum))) +
+  scale_x_discrete(limits = c("Label Set 1", "Label Set 2")) +
+  theme_minimal() +
+  labs(title = "Alluvial Plot: Label Set 1 to Label Set 2")
+
+
+n_colors <- length(unique(data$structural_category))
+set2_colors <- brewer.pal(n_colors, "Set1")  # or "Set2", "Dark2", etc.
+names(set2_colors) <- unique(data$structural_category)
+
+# 'full-splice_match': '#1f77b4',
+#                           'genic': '#9467bd',
+#                           'incomplete-splice_match': '#ff7f0e',
+#                           'intergenic':  '#7f7f7f',
+#                           'novel_in_catalog': '#2ca02c',
+#                           'novel_not_in_catalog': '#d62728'
+
+
+sqanti3_colors <- c('full-splice_match'= '#1f77b4',
+                          'genic'= '#9467bd',
+                          'incomplete-splice_match'= '#ff7f0e',
+                          'intergenic'=  '#7f7f7f',
+                          'novel_in_catalog'= '#2ca02c',
+                          'novel_not_in_catalog'= '#d62728')
+
+
+ggplot(data, aes(axis1 = structural_category, axis2 = event )) +
+  geom_alluvium(aes(fill = structural_category), alpha = 0.9) +
+  geom_stratum(alpha = 0.) +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), 
+          #  hjust = c(rep(1.3, length(unique(data$event))), 
+           #          rep(-0.3, length(unique(data$structural_category)))),
+             size = 2, lineheight = 0.8) +
+  scale_x_discrete(limits = c( "SQANTI3\nstructural category","Structural\ndifference detected")) +
+  theme_minimal() + scale_fill_manual(values=sqanti3_colors) +
+  #theme(plot.margin = margin(20, 100, 20, 100)) +  # Add margins for labels
+  labs(title = "Alluvial Plot: sqanti3 to new event labels", y="")
+
+  
+```
+```{r}
+
+
+```
+```{r}
+
+# Function to add line breaks to long labels
+wrap_labels <- function(x, width = 10) {
+  str_wrap(x, width = width)
+}
+
+# Apply to your data
+data_wrapped <- data %>%
+  mutate(
+    label1_short = wrap_labels(event, width = 8),
+    label2_short = wrap_labels(structural_category, width = 8)
+  )
+
+```
+```{r}
+# 
+# ggplot(data_wrapped, aes(axis1 = label1_short, axis2 = label2_short)) +
+#   geom_alluvium(aes(fill = label2_short), alpha = 0.9) +
+#   geom_stratum(alpha = 0.) +
+#   geom_text(stat = "stratum", aes(label = after_stat(stratum)),
+#             size = 2, lineheight = 0.8) +
+#   scale_x_discrete(limits = c("Structural\ndifference", "SQANTI3\nstructural category")) +
+#   theme_minimal() + scale_fill_manual(values=set2_colors) +
+#   #theme(plot.margin = margin(20, 100, 20, 100)) +  # Add margins for labels
+#   labs(title = "Alluvial Plot: sqanti3 to new event labels", y="")
+
+
+```
+
+```{r}
+# If the sessioninfo package is installed
+sessioninfo::session_info(to_file = "quarto-debug-log.txt")
+sessionInfo()
+```
