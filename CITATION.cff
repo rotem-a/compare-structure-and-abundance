@@ -6,9 +6,10 @@ authors:
   - family-names: Aharon
     given-names: Rotem
     orcid: https://orcid.org/0000-0000-0000-0000
-repository-code: https://github.com/yourusername/yourrepo
-url: https://yourusername.github.io/yourrepo
+repository-code: https://github.com/rotem-a/compare-structure-and-abundance
+url: https://rotem-a.github.io/compare-structure-and-abundance
+
 license: MIT
 version: 1.0.0
-date-released: 2025-01-01
+date-released: 2026-07-01
 doi: 10.5281/zenodo.XXXXXXX
