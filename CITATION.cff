@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+title: Long read sequencing reveals changes in measured isoform structure and abundance due to RNA processing
+message: "Please cite it this work as below."
+type: analysis-pages
+authors:
+  - family-names: Aharon
+    given-names: Rotem
+    orcid: https://orcid.org/0000-0000-0000-0000
+repository-code: https://github.com/yourusername/yourrepo
+url: https://yourusername.github.io/yourrepo
+license: MIT
+version: 1.0.0
+date-released: 2025-01-01
+doi: 10.5281/zenodo.XXXXXXX
