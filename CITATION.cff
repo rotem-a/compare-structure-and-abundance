@@ -3,8 +3,10 @@ title: Long read sequencing reveals changes in measured isoform structure and ab
 message: "Please cite it this work as below."
 type: analysis-pages
 authors:
-  - family-names: Aharon
-    given-names: Rotem
+- family-names: Aharon
+  given-names: Rotem
+license: MIT
+version: 1.0.0
 license: MIT
 version: 1.0.0
 date-released: 2026-07-01
